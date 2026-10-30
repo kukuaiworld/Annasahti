@@ -34,14 +34,18 @@ The database includes:
   - `certificates` & `volunteer_achievements`: Volunteer recognition and milestone badges.
   - `safechain_events` & `audit_events`: Immutable audit logging.
 - **Views**:
-  - `available_food_batches`
+  - `available_food_batches` (filtered by active balance and verified human checks)
+  - `delivery_discrepancies` (audit and logistics view for physical loss, missing, and damaged food)
   - `delivery_summary`
   - `impact_summary`
   - `volunteer_delivery_summary`
   - `v_food_batch_summary`, `v_allocation_summary`, `v_delivery_summary`, `v_waste_processing_summary`
-- **Security & Integrity**:
-  - Row Level Security (RLS) enabled across tables.
-  - Triggers and functions enforcing allocation quotas, automated batch lifecycle progression, and audit logs.
+- **Security & Integrity (Hardened in Migration 20261030231500)**:
+  - **Accurate Quantity Accounting**: Parent/child batch splitting, dynamic available balances (`available_quantity`), and concurrency locking preventing double-allocation.
+  - **Strict Human Safety Verification**: AI models strictly prevented from approving food for consumption; human inspector credential validation; species-specific checks for animal feed.
+  - **Multi-Tenant Row Level Security (RLS)**: 26 granular RLS policies enforcing tenant isolation between donors, recipients, volunteers, and distinct platform vs. organisation admin tiers.
+  - **Physical Delivery Loss Accounting**: Full reconciliation of received vs damaged vs missing quantities with mandatory discrepancy reporting.
+  - **Data Preservation**: 100% non-destructive idempotent migrations preserving historical food records and audits.
 
 ---
 
