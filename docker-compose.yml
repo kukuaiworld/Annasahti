@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: foodloop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-foodloop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-foodloop_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-foodloop}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - foodloop_postgres_data:/var/lib/postgresql/data
+    networks:
+      - foodloop-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-foodloop} -d ${POSTGRES_DB:-foodloop}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: foodloop-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6380}:6379"
+    volumes:
+      - foodloop_redis_data:/data
+    networks:
+      - foodloop-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+volumes:
+  foodloop_postgres_data:
+    name: foodloop_postgres_data
+  foodloop_redis_data:
+    name: foodloop_redis_data
+
+networks:
+  foodloop-network:
+    name: foodloop-network
+    driver: bridge
