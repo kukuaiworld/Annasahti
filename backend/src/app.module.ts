@@ -6,6 +6,9 @@ import { DatabaseModule } from './database/database.module';
 import { SafeChainModule } from './safechain/safechain.module';
 import { FoodBatchesModule } from './food-batches/food-batches.module';
 import { InspectionsModule } from './inspections/inspections.module';
+import { MatchingModule } from './matching/matching.module';
+import { AllocationsModule } from './allocations/allocations.module';
+import { DeliveriesModule } from './deliveries/deliveries.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -19,6 +22,9 @@ import { HealthModule } from './health/health.module';
     SafeChainModule,
     FoodBatchesModule,
     InspectionsModule,
+    MatchingModule,
+    AllocationsModule,
+    DeliveriesModule,
     HealthModule,
   ],
 })
