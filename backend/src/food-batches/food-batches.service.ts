@@ -476,7 +476,26 @@ export class FoodBatchesService {
         );
       }
 
-      // 6. Record parent batch SafeChain event
+      // 6. Update parent batch: reserve split quantity as allocated and update status
+      const newAllocated = Number(parent.allocated_quantity || 0) + totalChildQty;
+      const isFullySplit = (availableBalance - totalChildQty) <= 0.0001;
+      const newParentStatus = isFullySplit
+        ? FoodBatchStatus.ALLOCATED
+        : FoodBatchStatus.PARTIALLY_ALLOCATED;
+
+      await client.query(
+        `
+        UPDATE public.food_batches
+        SET 
+          allocated_quantity = $1,
+          status = $2::public.food_batch_status,
+          updated_at = now()
+        WHERE id = $3;
+        `,
+        [newAllocated, newParentStatus, parent.id],
+      );
+
+      // 7. Record parent batch SafeChain event
       await this.safechain.recordEvent(
         {
           batchId: parent.id,

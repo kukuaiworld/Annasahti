@@ -9,6 +9,8 @@ import { InspectionsModule } from './inspections/inspections.module';
 import { MatchingModule } from './matching/matching.module';
 import { AllocationsModule } from './allocations/allocations.module';
 import { DeliveriesModule } from './deliveries/deliveries.module';
+import { ImpactModule } from './impact/impact.module';
+import { RecognitionModule } from './recognition/recognition.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -25,6 +27,8 @@ import { HealthModule } from './health/health.module';
     MatchingModule,
     AllocationsModule,
     DeliveriesModule,
+    ImpactModule,
+    RecognitionModule,
     HealthModule,
   ],
 })

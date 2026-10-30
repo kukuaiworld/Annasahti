@@ -38,7 +38,7 @@ export class DeliveriesService {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
     }
 
-    if (['delivered', 'cancelled', 'failed'].includes(task.status)) {
+    if (['delivered', 'discrepancy_reported', 'cancelled', 'failed'].includes(task.status)) {
       throw new BadRequestException(`Cannot assign volunteer to task in "${task.status}" status.`);
     }
 
@@ -235,7 +235,7 @@ export class DeliveriesService {
       throw new ForbiddenException('Only the assigned volunteer can record pickup for this delivery.');
     }
 
-    if (['delivered', 'cancelled', 'failed'].includes(task.status)) {
+    if (['delivered', 'discrepancy_reported', 'cancelled', 'failed'].includes(task.status)) {
       throw new BadRequestException(`Cannot record pickup for delivery in "${task.status}" status.`);
     }
 
@@ -295,7 +295,7 @@ export class DeliveriesService {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
     }
 
-    if (task.status === 'delivered') {
+    if (['delivered', 'discrepancy_reported'].includes(task.status)) {
       throw new BadRequestException('This delivery has already been confirmed.');
     }
 

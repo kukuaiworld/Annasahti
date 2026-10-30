@@ -18,6 +18,7 @@ build/
 .next/
 out/
 .cache/
+coverage/
 
 # System files
 .DS_Store

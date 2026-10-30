@@ -19,6 +19,7 @@ export interface SafeChainEventRecord {
   event_type: string;
   description: string;
   recorded_by?: string;
+  recorded_by_name?: string;
   event_data: Record<string, any>;
   recorded_at: Date;
   created_at: Date;
