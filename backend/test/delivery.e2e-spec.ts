@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
-import { generateKeyPair, SignJWT } from 'jose';
+import type * as JoseTypes from 'jose';
 import { AppModule } from '../src/app.module';
+import { DeliveryModule } from '../src/delivery/delivery.module';
 import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import {
@@ -17,7 +18,8 @@ describe('Delivery & SafeChain Module (e2e)', () => {
   let app: INestApplication;
   let authService: AuthService;
   let taskRepo: IDeliveryTaskRepository;
-  let keyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jose: typeof JoseTypes;
+  let keyPair: JoseTypes.GenerateKeyPairResult;
 
   const issuer = 'http://127.0.0.1:54321/auth/v1';
   const audience = 'authenticated';
@@ -36,10 +38,12 @@ describe('Delivery & SafeChain Module (e2e)', () => {
   let seededQrToken: string;
 
   beforeAll(async () => {
-    keyPair = await generateKeyPair('ES256');
+    const dynamicImport = new Function('specifier', 'return import(specifier)');
+    jose = await dynamicImport('jose');
+    keyPair = await jose.generateKeyPair('ES256');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      imports: [AppModule, DeliveryModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
@@ -63,7 +67,7 @@ describe('Delivery & SafeChain Module (e2e)', () => {
     // Generate test JWTs
     const now = Math.floor(Date.now() / 1000);
 
-    tokenVolunteerA = await new SignJWT({
+    tokenVolunteerA = await new jose.SignJWT({
       sub: volunteerAId,
       email: 'volunteera@foodloop.org',
       role: 'authenticated',
@@ -75,7 +79,7 @@ describe('Delivery & SafeChain Module (e2e)', () => {
       .setExpirationTime(now + 3600)
       .sign(keyPair.privateKey);
 
-    tokenVolunteerB = await new SignJWT({
+    tokenVolunteerB = await new jose.SignJWT({
       sub: volunteerBId,
       email: 'volunteerb@foodloop.org',
       role: 'authenticated',
@@ -87,7 +91,7 @@ describe('Delivery & SafeChain Module (e2e)', () => {
       .setExpirationTime(now + 3600)
       .sign(keyPair.privateKey);
 
-    tokenRecipient = await new SignJWT({
+    tokenRecipient = await new jose.SignJWT({
       sub: recipientUserId,
       email: 'recipient@shelter.org',
       role: 'authenticated',
@@ -99,7 +103,7 @@ describe('Delivery & SafeChain Module (e2e)', () => {
       .setExpirationTime(now + 3600)
       .sign(keyPair.privateKey);
 
-    tokenAdmin = await new SignJWT({
+    tokenAdmin = await new jose.SignJWT({
       sub: platformAdminId,
       email: 'admin@foodloop.org',
       role: 'authenticated',

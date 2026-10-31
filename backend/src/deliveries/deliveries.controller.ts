@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -18,6 +19,7 @@ import { CancelDeliveryDto } from './dto/cancel-delivery.dto';
 import { PickupDeliveryDto } from './dto/pickup-delivery.dto';
 import { CompleteDeliveryDto } from './dto/complete-delivery.dto';
 import { DeliveryQueryDto } from './dto/delivery-query.dto';
+import { UpdateLocationDto } from './dto/update-location.dto';
 
 @Controller('deliveries')
 @UseGuards(AuthGuard)
@@ -38,6 +40,14 @@ export class DeliveriesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.deliveriesService.getDeliveryById(deliveryId, user);
+  }
+
+  @Post(':deliveryId/claim')
+  async claimDelivery(
+    @Param('deliveryId', ParseUUIDPipe) deliveryId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.deliveriesService.claimDelivery(deliveryId, user);
   }
 
   @Post(':deliveryId/assign')
@@ -83,5 +93,14 @@ export class DeliveriesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.deliveriesService.completeDelivery(deliveryId, dto, user);
+  }
+
+  @Patch(':deliveryId/location')
+  async updateVolunteerLocation(
+    @Param('deliveryId', ParseUUIDPipe) deliveryId: string,
+    @Body() dto: UpdateLocationDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.deliveriesService.updateVolunteerLocation(deliveryId, dto, user);
   }
 }

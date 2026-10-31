@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
-import { generateKeyPair, SignJWT } from 'jose';
+import type * as JoseTypes from 'jose';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
@@ -14,7 +14,8 @@ import { DocumentType } from '../src/organisations/entities/organisation-documen
 describe('Organisations Module (e2e)', () => {
   let app: INestApplication;
   let authService: AuthService;
-  let keyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jose: typeof JoseTypes;
+  let keyPair: JoseTypes.GenerateKeyPairResult;
 
   const issuer = 'http://127.0.0.1:54321/auth/v1';
   const audience = 'authenticated';
@@ -30,7 +31,9 @@ describe('Organisations Module (e2e)', () => {
   let orgAId: string;
 
   beforeAll(async () => {
-    keyPair = await generateKeyPair('ES256');
+    const dynamicImport = new Function('specifier', 'return import(specifier)');
+    jose = await dynamicImport('jose');
+    keyPair = await jose.generateKeyPair('ES256');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -55,7 +58,7 @@ describe('Organisations Module (e2e)', () => {
     // Generate JWT tokens
     const now = Math.floor(Date.now() / 1000);
 
-    tokenUserA = await new SignJWT({
+    tokenUserA = await new jose.SignJWT({
       sub: userAId,
       email: 'usera@ngo.org',
       role: 'authenticated',
@@ -67,7 +70,7 @@ describe('Organisations Module (e2e)', () => {
       .setExpirationTime(now + 3600)
       .sign(keyPair.privateKey);
 
-    tokenUserB = await new SignJWT({
+    tokenUserB = await new jose.SignJWT({
       sub: userBId,
       email: 'userb@restaurant.com',
       role: 'authenticated',
@@ -79,7 +82,7 @@ describe('Organisations Module (e2e)', () => {
       .setExpirationTime(now + 3600)
       .sign(keyPair.privateKey);
 
-    tokenReviewer = await new SignJWT({
+    tokenReviewer = await new jose.SignJWT({
       sub: reviewerId,
       email: 'reviewer@foodloop.org',
       role: 'authenticated',
@@ -265,7 +268,7 @@ describe('Organisations Module (e2e)', () => {
 
     it('POST /api/v1/admin/organisations/:id/verification-decision should prevent self-approval if reviewer belongs to org', async () => {
       // User A (creator/admin of Org A) tries to act as platform reviewer to approve Org A
-      const rogueReviewerToken = await new SignJWT({
+      const rogueReviewerToken = await new jose.SignJWT({
         sub: userAId, // SAME as creator of Org A!
         email: 'usera@ngo.org',
         role: 'authenticated',

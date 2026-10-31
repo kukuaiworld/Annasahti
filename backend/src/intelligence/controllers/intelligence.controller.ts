@@ -18,9 +18,12 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { SupabaseAuthGuard } from '../../auth/guards/supabase-auth.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { DataReadinessService } from '../services/data-readiness.service';
 import { WastePatternService } from '../services/waste-pattern.service';
 import { SimulationOrchestratorService } from '../services/simulation-orchestrator.service';
+import { OperationalIntelligenceService } from '../services/operational-intelligence.service';
 import { SimulationRequestDto } from '../dto/simulation-request.dto';
 import { EmergencyScenarioDto } from '../dto/emergency-scenario.dto';
 import { CounterfactualRequestDto } from '../dto/counterfactual-request.dto';
@@ -35,7 +38,39 @@ export class IntelligenceController {
     private readonly readinessService: DataReadinessService,
     private readonly wastePatternService: WastePatternService,
     private readonly simulationService: SimulationOrchestratorService,
+    private readonly operationalService: OperationalIntelligenceService,
   ) {}
+
+  @Get('operational-summary')
+  @ApiOperation({
+    summary: 'Operational Intelligence: Measured Performance & Surplus Patterns',
+    description:
+      'Aggregates real-time delivery counts, rescue fulfillment rates, and surplus waste distributions from database telemetry.',
+  })
+  async getOperationalSummary(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('organisationId') organisationId?: string,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.operationalService.getOperationalSummary(
+      { startDate, endDate, organisationId },
+      user as AuthUser,
+    );
+  }
+
+  @Get('bottlenecks')
+  @ApiOperation({
+    summary: 'Operational Intelligence: Bottleneck & Lead-Time Analysis',
+    description:
+      'Detects inspection backlogs, delayed delivery pickups, and computes end-to-end operational lead times.',
+  })
+  async getBottlenecks(
+    @Query('organisationId') organisationId?: string,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.operationalService.getBottlenecks(user as AuthUser, organisationId);
+  }
 
   @Get('readiness')
   @ApiOperation({

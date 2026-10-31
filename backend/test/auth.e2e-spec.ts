@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
-import { generateKeyPair, SignJWT } from 'jose';
+import type * as JoseTypes from 'jose';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
@@ -9,8 +9,9 @@ import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter
 describe('Supabase Authentication (e2e)', () => {
   let app: INestApplication;
   let authService: AuthService;
-  let keyPair: Awaited<ReturnType<typeof generateKeyPair>>;
-  let untrustedKeyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jose: typeof JoseTypes;
+  let keyPair: JoseTypes.GenerateKeyPairResult;
+  let untrustedKeyPair: JoseTypes.GenerateKeyPairResult;
 
   const issuer = 'http://127.0.0.1:54321/auth/v1';
   const audience = 'authenticated';
@@ -18,8 +19,10 @@ describe('Supabase Authentication (e2e)', () => {
   const testUserEmail = 'volunteer@foodloop.org';
 
   beforeAll(async () => {
-    keyPair = await generateKeyPair('ES256');
-    untrustedKeyPair = await generateKeyPair('ES256');
+    const dynamicImport = new Function('specifier', 'return import(specifier)');
+    jose = await dynamicImport('jose');
+    keyPair = await jose.generateKeyPair('ES256');
+    untrustedKeyPair = await jose.generateKeyPair('ES256');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -79,7 +82,7 @@ describe('Supabase Authentication (e2e)', () => {
   });
 
   it('Protected Endpoint: GET /api/v1/auth/me should reject token with invalid signature', async () => {
-    const forgedToken = await new SignJWT({
+    const forgedToken = await new jose.SignJWT({
       role: 'authenticated',
       email: testUserEmail,
     })
@@ -98,7 +101,7 @@ describe('Supabase Authentication (e2e)', () => {
   });
 
   it('Protected Endpoint: GET /api/v1/auth/me should reject expired token', async () => {
-    const expiredToken = await new SignJWT({
+    const expiredToken = await new jose.SignJWT({
       role: 'authenticated',
       email: testUserEmail,
     })
@@ -117,7 +120,7 @@ describe('Supabase Authentication (e2e)', () => {
   });
 
   it('Protected Endpoint: GET /api/v1/auth/me should reject token with invalid issuer', async () => {
-    const badIssuerToken = await new SignJWT({
+    const badIssuerToken = await new jose.SignJWT({
       role: 'authenticated',
       email: testUserEmail,
     })
@@ -136,7 +139,7 @@ describe('Supabase Authentication (e2e)', () => {
   });
 
   it('Protected Endpoint: GET /api/v1/auth/me should reject token with invalid audience', async () => {
-    const badAudienceToken = await new SignJWT({
+    const badAudienceToken = await new jose.SignJWT({
       role: 'authenticated',
       email: testUserEmail,
     })
@@ -155,7 +158,7 @@ describe('Supabase Authentication (e2e)', () => {
   });
 
   it('Protected Endpoint: GET /api/v1/auth/me should accept valid token and return verified user context', async () => {
-    const validToken = await new SignJWT({
+    const validToken = await new jose.SignJWT({
       role: 'authenticated',
       email: testUserEmail,
     })

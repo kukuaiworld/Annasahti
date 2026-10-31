@@ -18,6 +18,9 @@ import { DeliveriesModule } from './deliveries/deliveries.module';
 import { ImpactModule } from './impact/impact.module';
 import { RecognitionModule } from './recognition/recognition.module';
 import { HealthModule } from './health/health.module';
+import { LocationModule } from './location/location.module';
+import { DeliveryModule } from './delivery/delivery.module';
+import { IntelligenceModule } from './intelligence/intelligence.module';
 
 @Module({
   imports: [
@@ -40,9 +43,12 @@ import { HealthModule } from './health/health.module';
     MatchingModule,
     AllocationsModule,
     DeliveriesModule,
+    DeliveryModule,
+    IntelligenceModule,
     ImpactModule,
     RecognitionModule,
     HealthModule,
+    LocationModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

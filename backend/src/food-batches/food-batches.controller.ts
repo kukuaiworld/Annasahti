@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '../common/guards/auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Public } from '../common/decorators/public.decorator';
 import { AuthUser } from '../common/interfaces/auth-user.interface';
 import { FoodBatchesService } from './food-batches.service';
 import { CreateFoodBatchDto } from './dto/create-food-batch.dto';
@@ -22,6 +23,14 @@ import { SplitBatchDto } from './dto/split-batch.dto';
 @UseGuards(AuthGuard)
 export class FoodBatchesController {
   constructor(private readonly batchesService: FoodBatchesService) {}
+
+  @Public()
+  @Get('trace/:batchCode')
+  async getBatchTrace(
+    @Param('batchCode') batchCode: string,
+  ) {
+    return this.batchesService.getBatchTrace(batchCode);
+  }
 
   @Post()
   async createBatch(

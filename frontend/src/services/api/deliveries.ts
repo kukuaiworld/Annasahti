@@ -90,6 +90,23 @@ export class DeliveriesApi {
       { reason }
     );
   }
+
+  /**
+   * Update volunteer's live location for active delivery task (requires consent).
+   * Backend endpoint: PATCH /api/v1/deliveries/:deliveryId/location
+   */
+  async updateVolunteerLocation(
+    deliveryId: string,
+    location: { latitude: number; longitude: number }
+  ): Promise<{ message: string; deliveryId: string; latitude: number; longitude: number; updatedAt: string }> {
+    return this.client.patch<{
+      message: string;
+      deliveryId: string;
+      latitude: number;
+      longitude: number;
+      updatedAt: string;
+    }>(`/deliveries/${deliveryId}/location`, location);
+  }
 }
 
 export const deliveriesApi = new DeliveriesApi();

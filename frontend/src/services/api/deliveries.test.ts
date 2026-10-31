@@ -125,4 +125,30 @@ describe('DeliveriesApi', () => {
       expect(result.deliveryTask.status).toBe(DeliveryStatus.DELIVERED);
     });
   });
+
+  describe('updateVolunteerLocation', () => {
+    it('calls PATCH /deliveries/:id/location with latitude and longitude', async () => {
+      const mockResponse = {
+        message: 'Volunteer location updated successfully.',
+        deliveryId: 'deliv-1',
+        latitude: 28.6139,
+        longitude: 77.209,
+        updatedAt: '2026-10-31T06:00:00Z',
+      };
+
+      vi.mocked(mockClient.patch).mockResolvedValue(mockResponse);
+
+      const result = await api.updateVolunteerLocation('deliv-1', {
+        latitude: 28.6139,
+        longitude: 77.209,
+      });
+
+      expect(mockClient.patch).toHaveBeenCalledWith('/deliveries/deliv-1/location', {
+        latitude: 28.6139,
+        longitude: 77.209,
+      });
+      expect(result.latitude).toBe(28.6139);
+      expect(result.longitude).toBe(77.209);
+    });
+  });
 });

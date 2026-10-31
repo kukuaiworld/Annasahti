@@ -118,6 +118,60 @@ describe('DeliveriesService', () => {
     });
   });
 
+  describe('claimDelivery', () => {
+    const mockUnassignedTask = {
+      id: 'task-open-1',
+      allocation_id: 'alloc-1',
+      batch_id: 'batch-1',
+      volunteer_id: null,
+      status: 'assigned',
+    };
+
+    it('should allow an active registered volunteer to self-claim an open delivery task', async () => {
+      dbMock.queryOne
+        .mockResolvedValueOnce(mockUnassignedTask) // task query
+        .mockResolvedValueOnce({ id: 'volunteer-uuid', full_name: 'Volunteer Sarah', role: 'volunteer', account_status: 'active' }) // volunteer profile check
+        .mockResolvedValueOnce({
+          ...mockUnassignedTask,
+          volunteer_id: 'volunteer-uuid',
+          status: 'accepted',
+        }); // updated task
+
+      const result = await service.claimDelivery('task-open-1', mockVolunteerUser);
+
+      expect(result.message).toContain('claimed');
+      expect(result.deliveryTask.volunteer_id).toBe('volunteer-uuid');
+      expect(safechainMock.recordEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'volunteer_assigned',
+          batchId: 'batch-1',
+          deliveryId: 'task-open-1',
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('should throw ForbiddenException if a non-volunteer attempts to claim a delivery', async () => {
+      const donorUser = {
+        id: 'donor-user',
+        email: 'donor@foodloop.org',
+        fullName: 'Donor John',
+        role: AppRole.DONOR,
+      };
+
+      await expect(service.claimDelivery('task-open-1', donorUser)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should throw BadRequestException if task is already claimed by another volunteer', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        ...mockUnassignedTask,
+        volunteer_id: 'other-volunteer-uuid',
+      });
+
+      await expect(service.claimDelivery('task-open-1', mockVolunteerUser)).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('reassignVolunteer', () => {
     const mockTaskAssigned = {
       id: 'task-1',
@@ -717,6 +771,57 @@ describe('DeliveriesService', () => {
       dbMock.queryOne.mockResolvedValueOnce(deliveryRow());
 
       await expect(service.getDeliveryById('task-1', mockOtherUser)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('updateVolunteerLocation', () => {
+    const validDto = { latitude: 28.6139, longitude: 77.209 };
+
+    it('rejects with NotFoundException when task does not exist', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(null);
+      await expect(
+        service.updateVolunteerLocation('nonexistent', validDto, mockVolunteerUser),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects with ForbiddenException when called by an unassigned user', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        id: 'task-1',
+        volunteer_id: 'other-vol-id',
+        status: 'assigned',
+      });
+      await expect(
+        service.updateVolunteerLocation('task-1', validDto, mockVolunteerUser),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects with BadRequestException when task is already delivered', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        id: 'task-1',
+        volunteer_id: mockVolunteerUser.id,
+        status: 'delivered',
+      });
+      await expect(
+        service.updateVolunteerLocation('task-1', validDto, mockVolunteerUser),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('successfully updates location when called by assigned volunteer', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        id: 'task-1',
+        volunteer_id: mockVolunteerUser.id,
+        status: 'in_transit',
+      });
+      dbMock.query.mockResolvedValueOnce([]);
+
+      const result = await service.updateVolunteerLocation('task-1', validDto, mockVolunteerUser);
+      expect(result.deliveryId).toBe('task-1');
+      expect(result.latitude).toBe(28.6139);
+      expect(result.longitude).toBe(77.209);
+      expect(dbMock.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE public.delivery_tasks'),
+        expect.arrayContaining([77.209, 28.6139, 'task-1']),
+      );
     });
   });
 });

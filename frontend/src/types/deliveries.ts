@@ -32,10 +32,17 @@ export interface DeliveryTaskRecord {
   storage_instructions?: string;
   donor_name?: string;
   donor_address?: string;
+  donor_lat?: number | null;
+  donor_lng?: number | null;
   recipient_name?: string;
   recipient_address?: string;
+  recipient_lat?: number | null;
+  recipient_lng?: number | null;
   volunteer_name?: string;
   volunteer_phone?: string | null;
+  volunteer_lat?: number | null;
+  volunteer_lng?: number | null;
+  volunteer_location_updated_at?: string | null;
   confirmation_id?: string;
   received_quantity?: number;
   damaged_quantity?: number;

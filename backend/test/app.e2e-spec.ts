@@ -1,12 +1,22 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
+import type * as JoseTypes from 'jose';
 import { AppModule } from './../src/app.module';
+import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from './../src/common/filters/http-exception.filter';
 import { DatabaseService } from '../src/database/database.service';
 
 describe('FoodLoop API (e2e)', () => {
   let app: INestApplication;
+  let authService: AuthService;
+  let jose: typeof JoseTypes;
+  let keyPair: JoseTypes.GenerateKeyPairResult;
+  let adminToken: string;
+  let volunteerToken: string;
+
+  const issuer = 'http://127.0.0.1:54321/auth/v1';
+  const audience = 'authenticated';
 
   const mockDbService: any = {
     query: jest.fn().mockResolvedValue([]),
@@ -23,12 +33,23 @@ describe('FoodLoop API (e2e)', () => {
           created_at: new Date().toISOString(),
         });
       }
+      if (sql.includes('FROM public.profiles WHERE') || sql.includes('FROM profiles WHERE')) {
+        return Promise.resolve({
+          id: '11111111-1111-1111-1111-111111111111',
+          full_name: 'Test Admin',
+          role: 'admin',
+        });
+      }
       return Promise.resolve(null);
     }),
     transaction: jest.fn((cb) => cb(mockDbService)),
   };
 
   beforeAll(async () => {
+    const dynamicImport = new Function('specifier', 'return import(specifier)');
+    jose = await dynamicImport('jose');
+    keyPair = await jose.generateKeyPair('ES256');
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -46,6 +67,35 @@ describe('FoodLoop API (e2e)', () => {
       }),
     );
     app.useGlobalFilters(new HttpExceptionFilter());
+
+    authService = moduleFixture.get<AuthService>(AuthService);
+    authService.setKeyResolver(() => Promise.resolve(keyPair.publicKey));
+
+    const now = Math.floor(Date.now() / 1000);
+    adminToken = await new jose.SignJWT({
+      sub: '11111111-1111-1111-1111-111111111111',
+      email: 'admin@foodloop.org',
+      role: 'authenticated',
+    })
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT' })
+      .setIssuer(issuer)
+      .setAudience(audience)
+      .setIssuedAt(now)
+      .setExpirationTime(now + 3600)
+      .sign(keyPair.privateKey);
+
+    volunteerToken = await new jose.SignJWT({
+      sub: '11111111-1111-1111-1111-111111111111',
+      email: 'volunteer@foodloop.org',
+      role: 'authenticated',
+    })
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT' })
+      .setIssuer(issuer)
+      .setAudience(audience)
+      .setIssuedAt(now)
+      .setExpirationTime(now + 3600)
+      .sign(keyPair.privateKey);
+
     await app.init();
   });
 
@@ -102,8 +152,7 @@ describe('FoodLoop API (e2e)', () => {
   it('/api/v1/impact/definitions (GET) with auth headers', () => {
     return request(app.getHttpServer())
       .get('/api/v1/impact/definitions')
-      .set('x-user-id', '11111111-1111-1111-1111-111111111111')
-      .set('x-user-role', 'admin')
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(200)
       .expect((res) => {
         expect(Array.isArray(res.body)).toBe(true);
@@ -115,8 +164,7 @@ describe('FoodLoop API (e2e)', () => {
   it('/api/v1/impact/co2e/methodology (GET) with auth headers', () => {
     return request(app.getHttpServer())
       .get('/api/v1/impact/co2e/methodology')
-      .set('x-user-id', '11111111-1111-1111-1111-111111111111')
-      .set('x-user-role', 'admin')
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(200)
       .expect((res) => {
         expect(res.body.methodologyCode).toBe('CO2E_AVOIDED_EPA_WARM_V1');
@@ -145,8 +193,7 @@ describe('FoodLoop API (e2e)', () => {
   it('/api/v1/recognition/leaderboard (GET) with auth headers', () => {
     return request(app.getHttpServer())
       .get('/api/v1/recognition/leaderboard')
-      .set('x-user-id', '11111111-1111-1111-1111-111111111111')
-      .set('x-user-role', 'volunteer')
+      .set('Authorization', `Bearer ${volunteerToken}`)
       .expect(200)
       .expect((res) => {
         expect(res.body.period).toBe('monthly');

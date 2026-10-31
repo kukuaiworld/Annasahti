@@ -14,6 +14,7 @@ import { CancelDeliveryDto } from './dto/cancel-delivery.dto';
 import { PickupDeliveryDto } from './dto/pickup-delivery.dto';
 import { CompleteDeliveryDto } from './dto/complete-delivery.dto';
 import { DeliveryQueryDto } from './dto/delivery-query.dto';
+import { UpdateLocationDto } from './dto/update-location.dto';
 
 @Injectable()
 export class DeliveriesService {
@@ -117,6 +118,90 @@ export class DeliveriesService {
       message: 'Volunteer successfully assigned to delivery.',
       deliveryTask: updatedTask,
     };
+    }, user.id);
+  }
+
+  async claimDelivery(taskId: string, user: AuthUser): Promise<any> {
+    if (user.role !== AppRole.VOLUNTEER && user.role !== AppRole.ADMIN) {
+      throw new ForbiddenException('Only active volunteers or administrators can claim delivery tasks.');
+    }
+
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT dt.*, a.batch_id, a.recipient_organisation_id, b.donor_organisation_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE dt.id = $1
+          FOR UPDATE;
+          `,
+          [taskId],
+        )
+      ).rows[0];
+
+      if (!task) {
+        throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
+      }
+
+      if (['delivered', 'discrepancy_reported', 'cancelled', 'failed'].includes(task.status)) {
+        throw new BadRequestException(`Cannot claim delivery task in "${task.status}" status.`);
+      }
+
+      if (task.volunteer_id && task.volunteer_id !== user.id) {
+        throw new BadRequestException('This delivery task has already been claimed by another volunteer.');
+      }
+
+      // Verify that volunteer profile is active in public.profiles
+      const volunteer = (
+        await client.query(
+          `SELECT id, full_name, role FROM public.profiles WHERE id = $1 AND role = 'volunteer'::public.app_role AND account_status = 'active';`,
+          [user.id],
+        )
+      ).rows[0];
+
+      if (!volunteer && user.role !== AppRole.ADMIN) {
+        throw new ForbiddenException('Only active registered volunteers can claim delivery tasks.');
+      }
+
+      const updatedTask = (
+        await client.query(
+          `
+          UPDATE public.delivery_tasks
+          SET
+            volunteer_id = $1,
+            status = 'accepted'::public.delivery_status,
+            accepted_at = COALESCE(accepted_at, now()),
+            updated_at = now()
+          WHERE id = $2
+          RETURNING *;
+          `,
+          [user.id, taskId],
+        )
+      ).rows[0];
+
+      await this.safechain.recordEvent(
+        {
+          batchId: task.batch_id,
+          allocationId: task.allocation_id,
+          deliveryId: taskId,
+          eventType: 'volunteer_assigned',
+          description: `Volunteer ${user.fullName} claimed delivery task.`,
+          recordedBy: user.id,
+          eventData: {
+            deliveryTaskId: taskId,
+            volunteerId: user.id,
+            selfClaimed: true,
+          },
+        },
+        client,
+      );
+
+      return {
+        message: 'Delivery task successfully claimed.',
+        deliveryTask: updatedTask,
+      };
     }, user.id);
   }
 
@@ -262,6 +347,16 @@ export class DeliveriesService {
           [`Cancelled: ${dto.reason}`, taskId],
         )
       ).rows[0];
+
+      // Release reserved allocation inventory so food becomes available again
+      await client.query(
+        `
+        UPDATE public.food_allocations
+        SET status = 'cancelled'::public.allocation_status, updated_at = now()
+        WHERE id = $1;
+        `,
+        [task.allocation_id],
+      );
 
       await this.safechain.recordEvent(
         {
@@ -483,8 +578,15 @@ export class DeliveriesService {
         b.category as batch_category,
         donor.name as donor_name,
         donor.address as donor_address,
+        ST_Y(donor.location::geometry) as donor_lat,
+        ST_X(donor.location::geometry) as donor_lng,
         ro.name as recipient_name,
         ro.address as recipient_address,
+        ST_Y(ro.location::geometry) as recipient_lat,
+        ST_X(ro.location::geometry) as recipient_lng,
+        ST_Y(dt.volunteer_location::geometry) as volunteer_lat,
+        ST_X(dt.volunteer_location::geometry) as volunteer_lng,
+        dt.volunteer_location_updated_at,
         b.donor_organisation_id,
         a.recipient_organisation_id,
         p.full_name as volunteer_name,
@@ -646,6 +748,78 @@ export class DeliveriesService {
         limit,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  /**
+   * PATCH /api/v1/deliveries/:deliveryId/location
+   * Updates the volunteer's current live location for an active delivery task.
+   * Only the assigned volunteer (or platform admin) can submit location updates.
+   * Requires explicit volunteer consent.
+   */
+  async updateVolunteerLocation(
+    taskId: string,
+    dto: UpdateLocationDto,
+    user: AuthUser,
+  ): Promise<any> {
+    const task = await this.db.queryOne<{
+      id: string;
+      volunteer_id: string | null;
+      status: string;
+    }>(
+      `SELECT id, volunteer_id, status FROM public.delivery_tasks WHERE id = $1;`,
+      [taskId],
+    );
+
+    if (!task) {
+      throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
+    }
+
+    const isPlatformAdmin = user.role === AppRole.ADMIN;
+    const isAssignedVolunteer =
+      user.role === AppRole.VOLUNTEER && task.volunteer_id === user.id;
+
+    if (!isPlatformAdmin && !isAssignedVolunteer) {
+      throw new ForbiddenException(
+        'Only the assigned volunteer or platform administrator can update delivery task location.',
+      );
+    }
+
+    if (['delivered', 'failed', 'cancelled'].includes(task.status)) {
+      throw new BadRequestException(
+        `Cannot update location for task in "${task.status}" status.`,
+      );
+    }
+
+    if (
+      dto.latitude < -90 ||
+      dto.latitude > 90 ||
+      dto.longitude < -180 ||
+      dto.longitude > 180
+    ) {
+      throw new BadRequestException(
+        'Latitude must be between -90 and 90, and longitude between -180 and 180.',
+      );
+    }
+
+    await this.db.query(
+      `
+      UPDATE public.delivery_tasks
+      SET 
+        volunteer_location = ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+        volunteer_location_updated_at = NOW(),
+        updated_at = NOW()
+      WHERE id = $3;
+      `,
+      [dto.longitude, dto.latitude, taskId],
+    );
+
+    return {
+      message: 'Volunteer location updated successfully.',
+      deliveryId: taskId,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      updatedAt: new Date().toISOString(),
     };
   }
 }

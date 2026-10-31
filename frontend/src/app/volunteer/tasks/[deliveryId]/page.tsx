@@ -19,7 +19,9 @@ import {
   Phone,
   PackageCheck,
   Info,
+  LocateFixed,
 } from "lucide-react";
+import GoogleDeliveryMap from "@/components/maps/GoogleDeliveryMap";
 import { deliveriesApi } from "@/services/api/deliveries";
 import { DeliveryTaskRecord } from "@/types/deliveries";
 import { useAuth } from "@/providers/auth-provider";
@@ -41,6 +43,63 @@ export default function VolunteerTaskDetailPage() {
   const [submittingPickup, setSubmittingPickup] = useState<boolean>(false);
   const [pickupSuccess, setPickupSuccess] = useState<string | null>(null);
   const [pickupError, setPickupError] = useState<string | null>(null);
+
+  // Volunteer Location Sharing States
+  const [sharingLocation, setSharingLocation] = useState<boolean>(false);
+  const [locationSuccess, setLocationSuccess] = useState<string | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const handleShareLocation = () => {
+    if (!delivery) return;
+    if (typeof window === "undefined" || !navigator.geolocation) {
+      setLocationError("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    setLocationError(null);
+    setLocationSuccess(null);
+    setSharingLocation(true);
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          await deliveriesApi.updateVolunteerLocation(delivery.id, {
+            latitude,
+            longitude,
+          });
+
+          setLocationSuccess(
+            `Location shared: (${latitude.toFixed(4)}, ${longitude.toFixed(4)}). SafeChain ledger updated.`
+          );
+
+          setDelivery((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  volunteer_lat: latitude,
+                  volunteer_lng: longitude,
+                  volunteer_location_updated_at: new Date().toISOString(),
+                }
+              : null
+          );
+        } catch (err: any) {
+          setLocationError(err.message || "Failed to update location on the server.");
+        } finally {
+          setSharingLocation(false);
+        }
+      },
+      (geoErr) => {
+        setSharingLocation(false);
+        if (geoErr.code === geoErr.PERMISSION_DENIED) {
+          setLocationError("Location permission denied. Please allow location access in your browser settings.");
+        } else {
+          setLocationError(`Geolocation error: ${geoErr.message}`);
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
 
   const fetchDelivery = useCallback(async () => {
     if (!deliveryId) return;
@@ -228,6 +287,69 @@ export default function VolunteerTaskDetailPage() {
             </p>
           )}
         </div>
+      </div>
+
+      {/* Live Location Sharing & Interactive Google Map */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+              Interactive Google Route Navigation
+            </h3>
+            <p className="text-xs text-slate-600 mt-0.5">
+              Live road routing from donor pickup dock to recipient destination.
+            </p>
+          </div>
+
+          {(isAssigned || isInTransit) && (
+            <button
+              type="button"
+              onClick={handleShareLocation}
+              disabled={sharingLocation}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 transition shrink-0 disabled:opacity-50"
+              title="Requests browser geolocation permission to report your courier position"
+            >
+              <LocateFixed className={`w-3.5 h-3.5 text-blue-600 ${sharingLocation ? "animate-spin" : ""}`} />
+              <span>{sharingLocation ? "Acquiring GPS..." : "Share Live Courier GPS"}</span>
+            </button>
+          )}
+        </div>
+
+        {locationSuccess && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 text-xs text-emerald-800 flex items-start gap-2 shadow-sm">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <span>{locationSuccess}</span>
+          </div>
+        )}
+
+        {locationError && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-800 flex items-start gap-2 shadow-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span>{locationError}</span>
+          </div>
+        )}
+
+        <GoogleDeliveryMap
+          donor={{
+            name: delivery.donor_name || "Donor Organisation",
+            address: delivery.donor_address,
+            lat: delivery.donor_lat ?? null,
+            lng: delivery.donor_lng ?? null,
+          }}
+          recipient={{
+            name: delivery.recipient_name || "Recipient Organisation",
+            address: delivery.recipient_address,
+            lat: delivery.recipient_lat ?? null,
+            lng: delivery.recipient_lng ?? null,
+          }}
+          volunteer={{
+            name: delivery.volunteer_name || "You (Assigned Courier)",
+            lat: delivery.volunteer_lat ?? null,
+            lng: delivery.volunteer_lng ?? null,
+            updatedAt: delivery.volunteer_location_updated_at,
+          }}
+          height="380px"
+        />
       </div>
 
       {/* Cargo Information Card */}

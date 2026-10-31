@@ -490,6 +490,107 @@ export class FoodBatchesService {
     return this.safechain.getBatchEvents(id);
   }
 
+  /**
+   * Phase 5 (SafeChain & QR Traceability): GET /api/v1/batches/:id/qr
+   * Generates secure traceability payload for packaging labels.
+   */
+  async getBatchQr(id: string, user: AuthUser): Promise<any> {
+    const batch = await this.db.queryOne<FoodBatchRecord>(
+      `SELECT id, batch_code, food_name, donor_organisation_id, status FROM public.food_batches WHERE id = $1;`,
+      [id],
+    );
+
+    if (!batch) {
+      throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
+    }
+
+    if (!(await this.isBatchReadableByUser(id, { status: String(batch.status) }, user))) {
+      throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
+    }
+
+    return {
+      batchId: batch.id,
+      batchCode: batch.batch_code,
+      foodName: batch.food_name,
+      qrPayload: `FOODLOOP:BATCH:${batch.id}:${batch.batch_code}`,
+      traceUrl: `/food-trace?batch=${batch.batch_code}`,
+      notice: 'Traceability identifier only. Does not replace certified human food safety inspection.',
+    };
+  }
+
+  /**
+   * Phase 5 (SafeChain & QR Traceability): GET /api/v1/batches/trace/:batchCode
+   * Resolves permitted public traceability provenance and SafeChain timeline by batch code.
+   * Protects donor/recipient private PII.
+   */
+  async getBatchTrace(batchCode: string): Promise<any> {
+    const cleanCode = batchCode.trim().toUpperCase();
+    const batch = await this.db.queryOne<any>(
+      `
+      SELECT
+        b.id,
+        b.batch_code,
+        b.food_name,
+        b.description,
+        b.quantity,
+        b.quantity_unit,
+        b.category,
+        b.status,
+        b.prepared_at,
+        b.best_before_at,
+        b.parent_batch_id,
+        b.created_at,
+        o.name AS donor_organisation_name,
+        o.organisation_type AS donor_organisation_type
+      FROM public.food_batches b
+      JOIN public.organisations o ON o.id = b.donor_organisation_id
+      WHERE UPPER(b.batch_code) = $1;
+      `,
+      [cleanCode],
+    );
+
+    if (!batch) {
+      throw new NotFoundException(`Batch code "${batchCode}" not found.`);
+    }
+
+    // Retrieve events from SafeChain
+    const events = await this.safechain.getBatchEvents(batch.id);
+
+    // Retrieve child batches if any
+    const children = await this.db.query<any>(
+      `SELECT id, batch_code, food_name, quantity, quantity_unit, category, status FROM public.food_batches WHERE parent_batch_id = $1;`,
+      [batch.id],
+    );
+
+    return {
+      batch: {
+        id: batch.id,
+        batchCode: batch.batch_code,
+        foodName: batch.food_name,
+        category: batch.category,
+        status: batch.status,
+        quantity: Number(batch.quantity),
+        quantityUnit: batch.quantity_unit,
+        preparedAt: batch.prepared_at,
+        bestBeforeAt: batch.best_before_at,
+        createdAt: batch.created_at,
+        donorOrganisation: {
+          name: batch.donor_organisation_name,
+          type: batch.donor_organisation_type,
+        },
+      },
+      childBatches: children,
+      safeChainEvents: events.map((e) => ({
+        id: e.id,
+        eventType: e.event_type,
+        description: e.description,
+        recordedAt: e.recorded_at,
+        eventData: e.event_data,
+      })),
+      disclaimer: 'SafeChain traceability confirms batch provenance and custody transfer audit events. It does not replace certified human food safety verification.',
+    };
+  }
+
   async updateBatch(id: string, dto: UpdateFoodBatchDto, user: AuthUser): Promise<FoodBatchRecord> {
     const batch = await this.db.queryOne<FoodBatchRecord>(
       `SELECT * FROM public.food_batches WHERE id = $1;`,

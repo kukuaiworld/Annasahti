@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import * as request from 'supertest';
-import { generateKeyPair, SignJWT } from 'jose';
+import type * as JoseTypes from 'jose';
 import { AppModule } from '../src/app.module';
+import { IntelligenceModule } from '../src/intelligence/intelligence.module';
 import { AuthService } from '../src/auth/auth.service';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { SimulationScenarioType, EmergencyType } from '../src/intelligence/enums/simulation-scenario.enum';
@@ -11,7 +12,8 @@ import { ForpRecordType } from '../src/intelligence/enums/forp-version.enum';
 describe('Advanced Intelligence Layer (e2e)', () => {
   let app: INestApplication;
   let authService: AuthService;
-  let keyPair: Awaited<ReturnType<typeof generateKeyPair>>;
+  let jose: typeof JoseTypes;
+  let keyPair: JoseTypes.GenerateKeyPairResult;
 
   const issuer = 'http://127.0.0.1:54321/auth/v1';
   const audience = 'authenticated';
@@ -20,10 +22,12 @@ describe('Advanced Intelligence Layer (e2e)', () => {
   let token: string;
 
   beforeAll(async () => {
-    keyPair = await generateKeyPair('ES256');
+    const dynamicImport = new Function('specifier', 'return import(specifier)');
+    jose = await dynamicImport('jose');
+    keyPair = await jose.generateKeyPair('ES256');
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
-      imports: [AppModule],
+      imports: [AppModule, IntelligenceModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
@@ -43,7 +47,7 @@ describe('Advanced Intelligence Layer (e2e)', () => {
     await app.init();
 
     const now = Math.floor(Date.now() / 1000);
-    token = await new SignJWT({
+    token = await new jose.SignJWT({
       sub: testUserId,
       email: 'analyst@foodloop.org',
       role: 'authenticated',

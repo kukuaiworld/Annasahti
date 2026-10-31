@@ -436,6 +436,46 @@ describe('FoodBatchesService', () => {
       expect(safechainMock.getBatchEvents).toHaveBeenCalledWith(ownBatch.id);
     });
 
+    it('GET /:id/qr returns QR payload with traceUrl and disclaimer', async () => {
+      const ownBatch = { ...otherOrgBatch, donor_organisation_id: mockDonorUser.organisationId, batch_code: 'FL-2026-TEST' };
+      dbMock.queryOne
+        .mockResolvedValueOnce(ownBatch)
+        .mockResolvedValueOnce({ allowed: true });
+
+      const result = await service.getBatchQr(ownBatch.id, mockDonorUser);
+
+      expect(result.batchId).toBe(ownBatch.id);
+      expect(result.batchCode).toBe('FL-2026-TEST');
+      expect(result.qrPayload).toContain('FOODLOOP:BATCH:');
+      expect(result.traceUrl).toBe('/food-trace?batch=FL-2026-TEST');
+    });
+
+    it('GET /trace/:batchCode resolves public batch provenance and SafeChain timeline', async () => {
+      const traceBatch = {
+        id: 'trace-batch-uuid',
+        batch_code: 'FL-2026-TRACE',
+        food_name: 'Fresh Bread',
+        quantity: 25,
+        quantity_unit: 'kg',
+        category: 'human_consumption',
+        status: 'approved',
+        donor_organisation_name: 'Metro Bakery',
+        donor_organisation_type: 'bakery',
+      };
+      dbMock.queryOne.mockResolvedValueOnce(traceBatch);
+      dbMock.query.mockResolvedValueOnce([]); // children
+      safechainMock.getBatchEvents.mockResolvedValueOnce([
+        { id: 'event-1', event_type: 'batch_created', description: 'Batch registered', recorded_at: new Date() },
+      ]);
+
+      const result = await service.getBatchTrace('FL-2026-TRACE');
+
+      expect(result.batch.batchCode).toBe('FL-2026-TRACE');
+      expect(result.batch.donorOrganisation.name).toBe('Metro Bakery');
+      expect(result.safeChainEvents.length).toBe(1);
+      expect(result.disclaimer).toBeDefined();
+    });
+
     it('GET /batches: org-less non-admin falls through to a deliberate 1 = 0 deny (never platform-wide)', async () => {
       const orgLessDonor: AuthUser = {
         id: '88888888-8888-8888-8888-888888888888',
