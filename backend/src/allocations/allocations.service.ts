@@ -166,7 +166,7 @@ export class AllocationsService {
         allocation,
         deliveryTask,
       };
-    });
+    }, user.id);
   }
 
   async getAllocationById(id: string, user: AuthUser): Promise<any> {
@@ -195,13 +195,31 @@ export class AllocationsService {
       throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
     }
 
-    // Role check: Only donor, recipient, assigned volunteer, or admin can inspect
+    // Role check: Only donor, recipient, or platform admin can inspect
+    // unconditionally; volunteers must have a real delivery relationship with
+    // this allocation (Phase 0, Task E). Others: concealed 404.
     const isDonorMember = user.organisationId === (allocation as any).donor_organisation_id;
     const isRecipientMember = user.organisationId === allocation.recipient_organisation_id;
     const isAdmin = user.role === AppRole.ADMIN;
 
-    if (!isDonorMember && !isRecipientMember && !isAdmin && user.role !== AppRole.VOLUNTEER) {
-      throw new ForbiddenException('You do not have permission to view this allocation.');
+    if (isDonorMember || isRecipientMember || isAdmin) {
+      // full access below
+    } else if (user.role === AppRole.VOLUNTEER) {
+      const volunteerTask = await this.db.queryOne<{ allowed: boolean }>(
+        `
+        SELECT EXISTS (
+          SELECT 1
+          FROM public.delivery_tasks dt
+          WHERE dt.allocation_id = $1 AND dt.volunteer_id = $2
+        ) AS allowed;
+        `,
+        [id, user.id],
+      );
+      if (!volunteerTask || !volunteerTask.allowed) {
+        throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
+      }
+    } else {
+      throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
     }
 
     const deliveryTasks = await this.db.query(
@@ -215,9 +233,16 @@ export class AllocationsService {
       [id],
     );
 
+    // Least privilege: volunteer phone numbers are only exposed to platform
+    // admins and organisation members of this allocation.
+    const exposeVolunteerContact = isDonorMember || isRecipientMember || isAdmin;
+    const safeDeliveryTasks = exposeVolunteerContact
+      ? deliveryTasks
+      : deliveryTasks.map((task: any) => ({ ...task, volunteer_phone: null }));
+
     return {
       ...allocation,
-      deliveryTasks,
+      deliveryTasks: safeDeliveryTasks,
     };
   }
 
@@ -230,21 +255,36 @@ export class AllocationsService {
     const values: any[] = [];
     let pIdx = 1;
 
-    // Tenant isolation: non-admins only see allocations relating to their organisation
+    // Phase 0 (Task D): strict per-role scoping with default deny.
+    // ADMIN: platform-wide. Org members: only records touching their active
+    // organisation. Volunteers: only allocations they deliver. Org-less
+    // non-admins must never fall through to an unrestricted query.
     if (user.role !== AppRole.ADMIN) {
+      const scopeClauses: string[] = [];
+
       if (user.organisationId) {
-        whereClauses.push(
+        scopeClauses.push(
           `(a.recipient_organisation_id = $${pIdx} OR b.donor_organisation_id = $${pIdx})`,
         );
         values.push(user.organisationId);
         pIdx++;
-      } else if (user.role === AppRole.VOLUNTEER) {
-        whereClauses.push(
+      }
+
+      if (user.role === AppRole.VOLUNTEER) {
+        scopeClauses.push(
           `EXISTS (SELECT 1 FROM public.delivery_tasks dt WHERE dt.allocation_id = a.id AND dt.volunteer_id = $${pIdx})`,
         );
         values.push(user.id);
         pIdx++;
       }
+
+      if (scopeClauses.length === 0) {
+        throw new ForbiddenException(
+          'You have no active organisation membership or delivery relationship, so allocation lists are not available to you.',
+        );
+      }
+
+      whereClauses.push(`(${scopeClauses.join(' OR ')})`);
     }
 
     if (query.status) {
@@ -307,156 +347,177 @@ export class AllocationsService {
   }
 
   async acceptAllocation(id: string, user: AuthUser): Promise<any> {
-    const allocation = await this.db.queryOne<FoodAllocationRecord>(
-      `SELECT * FROM public.food_allocations WHERE id = $1;`,
-      [id],
-    );
+    return this.db.transaction(async (client) => {
+      const allocation = (
+        await client.query(`SELECT * FROM public.food_allocations WHERE id = $1;`, [id])
+      ).rows[0];
 
-    if (!allocation) {
-      throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
-    }
+      if (!allocation) {
+        throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
+      }
 
-    if (user.role !== AppRole.ADMIN && user.organisationId !== allocation.recipient_organisation_id) {
-      throw new ForbiddenException('Only authorized members of the recipient organisation can accept allocations.');
-    }
+      if (user.role !== AppRole.ADMIN && user.organisationId !== allocation.recipient_organisation_id) {
+        throw new ForbiddenException('Only authorized members of the recipient organisation can accept allocations.');
+      }
 
-    if (allocation.status !== 'pending') {
-      throw new BadRequestException(`Cannot accept allocation currently in "${allocation.status}" status.`);
-    }
+      if (allocation.status !== 'pending') {
+        throw new BadRequestException(`Cannot accept allocation currently in "${allocation.status}" status.`);
+      }
 
-    const updated = (await this.db.queryOne<FoodAllocationRecord>(
-      `
-      UPDATE public.food_allocations
-      SET status = 'accepted'::public.allocation_status, accepted_at = now(), updated_at = now()
-      WHERE id = $1
-      RETURNING *;
-      `,
-      [id],
-    ))!;
+      const updated = (
+        await client.query(
+          `
+          UPDATE public.food_allocations
+          SET status = 'accepted'::public.allocation_status, accepted_at = now(), updated_at = now()
+          WHERE id = $1
+          RETURNING *;
+          `,
+          [id],
+        )
+      ).rows[0];
 
-    await this.safechain.recordEvent({
-      batchId: allocation.batch_id,
-      allocationId: id,
-      eventType: 'allocation_accepted',
-      description: `Allocation of ${allocation.allocated_quantity} ${allocation.quantity_unit} accepted by recipient`,
-      recordedBy: user.id,
-      eventData: { allocationId: id },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: allocation.batch_id,
+          allocationId: id,
+          eventType: 'allocation_accepted',
+          description: `Allocation of ${allocation.allocated_quantity} ${allocation.quantity_unit} accepted by recipient`,
+          recordedBy: user.id,
+          eventData: { allocationId: id },
+        },
+        client,
+      );
 
-    return {
-      message: 'Allocation accepted successfully.',
-      allocation: updated,
-    };
+      return {
+        message: 'Allocation accepted successfully.',
+        allocation: updated,
+      };
+    }, user.id);
   }
 
   async rejectAllocation(id: string, reason: string, user: AuthUser): Promise<any> {
-    const allocation = await this.db.queryOne<FoodAllocationRecord>(
-      `SELECT * FROM public.food_allocations WHERE id = $1;`,
-      [id],
-    );
+    return this.db.transaction(async (client) => {
+      const allocation = (
+        await client.query(`SELECT * FROM public.food_allocations WHERE id = $1;`, [id])
+      ).rows[0];
 
-    if (!allocation) {
-      throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
-    }
+      if (!allocation) {
+        throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
+      }
 
-    if (user.role !== AppRole.ADMIN && user.organisationId !== allocation.recipient_organisation_id) {
-      throw new ForbiddenException('Only members of the recipient organisation can reject this allocation.');
-    }
+      if (user.role !== AppRole.ADMIN && user.organisationId !== allocation.recipient_organisation_id) {
+        throw new ForbiddenException('Only members of the recipient organisation can reject this allocation.');
+      }
 
-    if (allocation.status !== 'pending') {
-      throw new BadRequestException(`Cannot reject an allocation in "${allocation.status}" status.`);
-    }
+      if (allocation.status !== 'pending') {
+        throw new BadRequestException(`Cannot reject an allocation in "${allocation.status}" status.`);
+      }
 
-    // Cancel allocation - Trigger automatically releases reserved batch stock!
-    const updated = (await this.db.queryOne<FoodAllocationRecord>(
-      `
-      UPDATE public.food_allocations
-      SET status = 'cancelled'::public.allocation_status, updated_at = now()
-      WHERE id = $1
-      RETURNING *;
-      `,
-      [id],
-    ))!;
+      // Cancel allocation - Trigger automatically releases reserved batch stock!
+      const updated = (
+        await client.query(
+          `
+          UPDATE public.food_allocations
+          SET status = 'cancelled'::public.allocation_status, updated_at = now()
+          WHERE id = $1
+          RETURNING *;
+          `,
+          [id],
+        )
+      ).rows[0];
 
-    // Cancel linked un-dispatched delivery tasks
-    await this.db.query(
-      `
-      UPDATE public.delivery_tasks
-      SET status = 'cancelled'::public.delivery_status, updated_at = now()
-      WHERE allocation_id = $1 AND status IN ('assigned', 'accepted');
-      `,
-      [id],
-    );
+      // Cancel linked un-dispatched delivery tasks
+      await client.query(
+        `
+        UPDATE public.delivery_tasks
+        SET status = 'cancelled'::public.delivery_status, updated_at = now()
+        WHERE allocation_id = $1 AND status IN ('assigned', 'accepted');
+        `,
+        [id],
+      );
 
-    await this.safechain.recordEvent({
-      batchId: allocation.batch_id,
-      allocationId: id,
-      eventType: 'allocation_rejected',
-      description: `Allocation rejected by recipient: ${reason}. Reserved stock released back to batch balance.`,
-      recordedBy: user.id,
-      eventData: { allocationId: id, rejectionReason: reason },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: allocation.batch_id,
+          allocationId: id,
+          eventType: 'allocation_rejected',
+          description: `Allocation rejected by recipient: ${reason}. Reserved stock released back to batch balance.`,
+          recordedBy: user.id,
+          eventData: { allocationId: id, rejectionReason: reason },
+        },
+        client,
+      );
 
-    return {
-      message: 'Allocation rejected and stock released back to batch.',
-      allocation: updated,
-    };
+      return {
+        message: 'Allocation rejected and stock released back to batch.',
+        allocation: updated,
+      };
+    }, user.id);
   }
 
   async cancelAllocation(id: string, reason: string, user: AuthUser): Promise<any> {
-    const allocation = await this.db.queryOne<FoodAllocationRecord>(
-      `
-      SELECT a.*, b.donor_organisation_id
-      FROM public.food_allocations a
-      JOIN public.food_batches b ON b.id = a.batch_id
-      WHERE a.id = $1;
-      `,
-      [id],
-    );
+    return this.db.transaction(async (client) => {
+      const allocation = (
+        await client.query(
+          `
+          SELECT a.*, b.donor_organisation_id
+          FROM public.food_allocations a
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE a.id = $1;
+          `,
+          [id],
+        )
+      ).rows[0];
 
-    if (!allocation) {
-      throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
-    }
+      if (!allocation) {
+        throw new NotFoundException(`Food allocation with ID "${id}" was not found.`);
+      }
 
-    if (user.role !== AppRole.ADMIN && user.organisationId !== (allocation as any).donor_organisation_id) {
-      throw new ForbiddenException('Only donor organisation members or admins can cancel this allocation.');
-    }
+      if (user.role !== AppRole.ADMIN && user.organisationId !== (allocation as any).donor_organisation_id) {
+        throw new ForbiddenException('Only donor organisation members or admins can cancel this allocation.');
+      }
 
-    if (['fulfilled', 'cancelled', 'expired'].includes(allocation.status)) {
-      throw new BadRequestException(`Cannot cancel allocation in "${allocation.status}" status.`);
-    }
+      if (['fulfilled', 'cancelled', 'expired'].includes(allocation.status)) {
+        throw new BadRequestException(`Cannot cancel allocation in "${allocation.status}" status.`);
+      }
 
-    const updated = (await this.db.queryOne<FoodAllocationRecord>(
-      `
-      UPDATE public.food_allocations
-      SET status = 'cancelled'::public.allocation_status, updated_at = now()
-      WHERE id = $1
-      RETURNING *;
-      `,
-      [id],
-    ))!;
+      const updated = (
+        await client.query(
+          `
+          UPDATE public.food_allocations
+          SET status = 'cancelled'::public.allocation_status, updated_at = now()
+          WHERE id = $1
+          RETURNING *;
+          `,
+          [id],
+        )
+      ).rows[0];
 
-    await this.db.query(
-      `
-      UPDATE public.delivery_tasks
-      SET status = 'cancelled'::public.delivery_status, updated_at = now()
-      WHERE allocation_id = $1 AND status IN ('assigned', 'accepted');
-      `,
-      [id],
-    );
+      await client.query(
+        `
+        UPDATE public.delivery_tasks
+        SET status = 'cancelled'::public.delivery_status, updated_at = now()
+        WHERE allocation_id = $1 AND status IN ('assigned', 'accepted');
+        `,
+        [id],
+      );
 
-    await this.safechain.recordEvent({
-      batchId: allocation.batch_id,
-      allocationId: id,
-      eventType: 'allocation_cancelled',
-      description: `Allocation cancelled by donor/admin: ${reason}. Reserved quantity released.`,
-      recordedBy: user.id,
-      eventData: { allocationId: id, cancellationReason: reason },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: allocation.batch_id,
+          allocationId: id,
+          eventType: 'allocation_cancelled',
+          description: `Allocation cancelled by donor/admin: ${reason}. Reserved quantity released.`,
+          recordedBy: user.id,
+          eventData: { allocationId: id, cancellationReason: reason },
+        },
+        client,
+      );
 
-    return {
-      message: 'Allocation cancelled and inventory released.',
-      allocation: updated,
-    };
+      return {
+        message: 'Allocation cancelled and inventory released.',
+        allocation: updated,
+      };
+    }, user.id);
   }
 }

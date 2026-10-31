@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import { InspectionsService } from './inspections.service';
 import { DatabaseService } from '../database/database.service';
 import { SafeChainService } from '../safechain/safechain.service';
+import { FoodBatchesService } from '../food-batches/food-batches.service';
 import { AnimalSpecies, AppRole, FoodBatchStatus, InspectionDecision } from '../common/enums/app.enums';
 import { AuthUser } from '../common/interfaces/auth-user.interface';
 
@@ -10,6 +11,7 @@ describe('InspectionsService', () => {
   let service: InspectionsService;
   let dbMock: any;
   let safechainMock: any;
+  let batchAccessMock: any;
 
   const mockInspectorUser: AuthUser = {
     id: 'inspector-uuid-1',
@@ -34,13 +36,28 @@ describe('InspectionsService', () => {
   };
 
   beforeEach(async () => {
+    const clientMock = {
+      // Delegates to dbMock.queryOne stubs; per-test client.query stubs take precedence
+      query: jest.fn(async (sql: string, params?: any[]) => {
+        const row = await dbMock.queryOne(sql, params);
+        return { rows: row === undefined || row === null ? [] : [row] };
+      }),
+    };
+
     dbMock = {
       query: jest.fn(),
       queryOne: jest.fn(),
+      transaction: jest.fn(async (cb) => cb(clientMock)),
     };
 
     safechainMock = {
       recordEvent: jest.fn().mockResolvedValue({ id: 'event-uuid' }),
+    };
+
+    // Phase 0 (Task E): inspection detail reads delegate batch access checks to
+    // the shared FoodBatchesService policy (same public service as production).
+    batchAccessMock = {
+      isBatchReadableByUser: jest.fn().mockResolvedValue(true),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -48,6 +65,7 @@ describe('InspectionsService', () => {
         InspectionsService,
         { provide: DatabaseService, useValue: dbMock },
         { provide: SafeChainService, useValue: safechainMock },
+        { provide: FoodBatchesService, useValue: batchAccessMock },
       ],
     }).compile();
 
@@ -89,12 +107,16 @@ describe('InspectionsService', () => {
           batchId: pendingBatch.id,
           eventType: 'inspection_completed',
         }),
+        expect.anything(),
+
       );
       expect(safechainMock.recordEvent).toHaveBeenCalledWith(
         expect.objectContaining({
           batchId: pendingBatch.id,
           eventType: 'batch_approved',
         }),
+        expect.anything(),
+
       );
     });
 
@@ -185,6 +207,8 @@ describe('InspectionsService', () => {
         expect.objectContaining({
           eventType: 'batch_rejected',
         }),
+        expect.anything(),
+
       );
     });
   });
@@ -197,6 +221,56 @@ describe('InspectionsService', () => {
       const res = await service.getInspectionQueue({ page: 1, limit: 10 }, mockInspectorUser);
       expect(res.data.length).toBe(1);
       expect(res.meta.total).toBe(1);
+    });
+  });
+
+  describe('getBatchInspectionDetail access control (Phase 0, Task E)', () => {
+    const dbBatch = {
+      id: 'batch-uuid-pending',
+      batch_code: 'FL-INSPECT01',
+      donor_organisation_id: 'org-uuid-1',
+      status: FoodBatchStatus.PENDING_INSPECTION,
+      food_name: 'Prepared Chicken Sandwiches',
+    };
+
+    it('delegates the read decision to the shared batch access policy', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(dbBatch);
+      dbMock.query.mockResolvedValue([]);
+      batchAccessMock.isBatchReadableByUser.mockResolvedValueOnce(true);
+
+      const result = await service.getBatchInspectionDetail(dbBatch.id, mockInspectorUser);
+
+      expect(result.batch.id).toBe(dbBatch.id);
+      expect(result.inspections).toEqual([]);
+      expect(batchAccessMock.isBatchReadableByUser).toHaveBeenCalledWith(
+        dbBatch.id,
+        { status: String(dbBatch.status) },
+        mockInspectorUser,
+      );
+    });
+
+    it('conceals a batch the caller cannot read with 404 (cross-tenant inspection history protection)', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(dbBatch);
+      batchAccessMock.isBatchReadableByUser.mockResolvedValueOnce(false);
+
+      const outsider: AuthUser = {
+        id: 'intruder',
+        fullName: 'Org-less Donor',
+        role: AppRole.DONOR,
+      };
+
+      await expect(
+        service.getBatchInspectionDetail(dbBatch.id, outsider),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('a nonexistent batch is concealed with 404', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getBatchInspectionDetail('00000000-0000-0000-0000-000000000000', mockInspectorUser),
+      ).rejects.toThrow(NotFoundException);
+      expect(batchAccessMock.isBatchReadableByUser).not.toHaveBeenCalled();
     });
   });
 });

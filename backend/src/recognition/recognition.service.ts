@@ -36,14 +36,25 @@ export class RecognitionService {
    * Helper to anonymize full name for public leaderboards and certificates.
    */
   private maskName(fullName?: string | null): string {
-    if (!fullName) return 'Anonymous Rescuer';
-    const parts = fullName.trim().split(/\s+/);
+    if (!fullName || fullName.trim().length === 0) return 'Anonymous Rescuer';
+
+    // Array.from handles surrogate pairs / multi-codepoint characters correctly
+    const parts = fullName.trim().split(/\s+/).filter((part) => part.length > 0);
+    if (parts.length === 0) return 'Anonymous Rescuer';
+
+    const firstChars = Array.from(parts[0]);
+    const firstInitial = firstChars[0];
+    if (!firstInitial) return 'Anonymous Rescuer';
+
     if (parts.length === 1) {
-      return `${parts[0].charAt(0)}***`;
+      // Single-word names (including initials or non-Latin scripts) always mask
+      // to a well-formed string instead of ` ***` garbage
+      return `${firstInitial}***`;
     }
-    const first = parts[0];
-    const lastInitial = parts[parts.length - 1].charAt(0);
-    return `${first} ${lastInitial}.`;
+
+    const lastChars = Array.from(parts[parts.length - 1]);
+    const lastInitial = lastChars[0];
+    return lastInitial ? `${parts[0]} ${lastInitial}.` : `${firstInitial}***`;
   }
 
   /**

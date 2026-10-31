@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import AppShell from "@/components/shared/AppShell";
+import { AuthProvider } from "@/providers/auth-provider";
 
 export const metadata: Metadata = {
-  title: "AnnaSathi 2.0 | Intelligent Surplus Food Recovery & Redistribution Network",
+  title: "FoodLoop | Food Rescue & Recovery Platform",
   description:
-    "Empowering commercial kitchens, volunteers, orphanages, animal shelters, and bio-energy plants to eliminate surplus food waste with FSSAI safety compliance, live FoodTrace, and AI smart matching.",
+    "FoodLoop connects food donors, verified recipient organizations, volunteers and authorized waste processors to ensure zero edible food waste with strict food-safety compliance.",
   icons: {
     icon: "/favicon.svg",
-    apple: "/logo-icon.svg",
   },
 };
 
@@ -20,7 +20,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="antialiased selection:bg-brand-500 selection:text-white">
-        <AppShell>{children}</AppShell>
+        <AuthProvider>
+          <AppShell>{children}</AppShell>
+        </AuthProvider>
       </body>
     </html>
   );

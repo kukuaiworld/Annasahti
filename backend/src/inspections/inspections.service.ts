@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { SafeChainService } from '../safechain/safechain.service';
+import { FoodBatchesService } from '../food-batches/food-batches.service';
 import { AppRole, FoodBatchStatus, InspectionDecision } from '../common/enums/app.enums';
 import { AuthUser } from '../common/interfaces/auth-user.interface';
 import { CreateInspectionDto } from './dto/create-inspection.dto';
@@ -37,6 +38,7 @@ export class InspectionsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly safechain: SafeChainService,
+    private readonly batchAccess: FoodBatchesService,
   ) {}
 
   async getInspectionQueue(query: InspectionQueryDto, user: AuthUser): Promise<any> {
@@ -98,6 +100,13 @@ export class InspectionsService {
     );
 
     if (!batch) {
+      throw new NotFoundException(`Food batch with ID "${batchId}" was not found.`);
+    }
+
+    // Phase 0 (Task E): inspection detail is a batch read. Reuse the shared
+    // batch access policy so unrelated organisations cannot enumerate
+    // another donor's inspection history (concealed 404).
+    if (!(await this.batchAccess.isBatchReadableByUser(batchId, { status: String(batch.status) }, user))) {
       throw new NotFoundException(`Food batch with ID "${batchId}" was not found.`);
     }
 
@@ -193,45 +202,61 @@ export class InspectionsService {
       dto.inspectionNotes || null,
     ];
 
-    const inspection = (await this.db.queryOne<InspectionRecord>(sql, values))!;
+    // Atomic inspection insert + audit events with actor context so the
+    // apply_inspection_result() trigger runs in the same transaction as the
+    // audit trail (and can attribute safechain events to the inspector).
+    return this.db.transaction(async (client) => {
+      const inspection = (
+        await client.query(sql, values)
+      ).rows[0] as InspectionRecord;
 
-    // SafeChain event recording
-    await this.safechain.recordEvent({
-      batchId: dto.batchId,
-      eventType: 'inspection_completed',
-      description: `Inspection completed by certified inspector ${user.fullName}. Decision: ${dto.decision}`,
-      recordedBy: user.id,
-      eventData: {
-        inspectionId: inspection.id,
-        decision: dto.decision,
-        targetSpecies: dto.targetSpecies || null,
-        temperatureC: dto.temperatureC || null,
-        evidenceCount: (dto.evidenceUrls || []).length,
-      },
-    });
+      // SafeChain event recording
+      await this.safechain.recordEvent(
+        {
+          batchId: dto.batchId,
+          eventType: 'inspection_completed',
+          description: `Inspection completed by certified inspector ${user.fullName}. Decision: ${dto.decision}`,
+          recordedBy: user.id,
+          eventData: {
+            inspectionId: inspection.id,
+            decision: dto.decision,
+            targetSpecies: dto.targetSpecies || null,
+            temperatureC: dto.temperatureC || null,
+            evidenceCount: (dto.evidenceUrls || []).length,
+          },
+        },
+        client,
+      );
 
-    if (
-      dto.decision === InspectionDecision.APPROVED_HUMAN ||
-      dto.decision === InspectionDecision.APPROVED_ANIMAL ||
-      dto.decision === InspectionDecision.APPROVED_ORGANIC_WASTE
-    ) {
-      await this.safechain.recordEvent({
-        batchId: dto.batchId,
-        eventType: 'batch_approved',
-        description: `Batch approved for destination: ${dto.decision}`,
-        recordedBy: user.id,
-        eventData: { decision: dto.decision },
-      });
-    } else if (dto.decision === InspectionDecision.REJECTED) {
-      await this.safechain.recordEvent({
-        batchId: dto.batchId,
-        eventType: 'batch_rejected',
-        description: `Batch rejected. Reason: ${dto.rejectionReason || 'Unspecified'}`,
-        recordedBy: user.id,
-        eventData: { rejectionReason: dto.rejectionReason },
-      });
-    }
+      if (
+        dto.decision === InspectionDecision.APPROVED_HUMAN ||
+        dto.decision === InspectionDecision.APPROVED_ANIMAL ||
+        dto.decision === InspectionDecision.APPROVED_ORGANIC_WASTE
+      ) {
+        await this.safechain.recordEvent(
+          {
+            batchId: dto.batchId,
+            eventType: 'batch_approved',
+            description: `Batch approved for destination: ${dto.decision}`,
+            recordedBy: user.id,
+            eventData: { decision: dto.decision },
+          },
+          client,
+        );
+      } else if (dto.decision === InspectionDecision.REJECTED) {
+        await this.safechain.recordEvent(
+          {
+            batchId: dto.batchId,
+            eventType: 'batch_rejected',
+            description: `Batch rejected. Reason: ${dto.rejectionReason || 'Unspecified'}`,
+            recordedBy: user.id,
+            eventData: { rejectionReason: dto.rejectionReason },
+          },
+          client,
+        );
+      }
 
-    return inspection;
+      return inspection;
+    }, user.id);
   }
 }

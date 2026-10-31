@@ -12,6 +12,7 @@ import {
   Leaf,
   LogOut,
   ExternalLink,
+  HeartHandshake,
 } from "lucide-react";
 
 export default function DonorSidebar() {
@@ -21,6 +22,7 @@ export default function DonorSidebar() {
     { label: "Dashboard", href: "/donor/dashboard", icon: LayoutDashboard },
     { label: "Donation Ledger", href: "/donor/donations", icon: UtensilsCrossed },
     { label: "Post Surplus Food", href: "/donor/new-donation", icon: PlusCircle },
+    { label: "Allocations", href: "/donor/allocations", icon: HeartHandshake },
     { label: "Impact & Analytics", href: "/donor/analytics", icon: BarChart3 },
     { label: "ESG Certificates", href: "/donor/certificates", icon: Award },
     { label: "Kitchen Settings", href: "/donor/settings", icon: Settings },
@@ -36,7 +38,7 @@ export default function DonorSidebar() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white text-base">AnnaSathi</span>
+              <span className="font-bold text-white text-base">FoodLoop</span>
               <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.2 rounded font-semibold uppercase">
                 Donor
               </span>

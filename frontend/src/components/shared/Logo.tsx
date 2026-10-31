@@ -1,5 +1,5 @@
-import Image from "next/image";
 import Link from "next/link";
+import { RefreshCw, Leaf } from "lucide-react";
 
 interface LogoProps {
   variant?: "full" | "icon" | "white";
@@ -16,8 +16,8 @@ export default function Logo({
 }: LogoProps) {
   const iconSizes = {
     sm: "w-8 h-8",
-    md: "w-10 h-10",
-    lg: "w-12 h-12",
+    md: "w-9 h-9",
+    lg: "w-11 h-11",
   };
 
   const textSizes = {
@@ -28,14 +28,11 @@ export default function Logo({
 
   const content = (
     <div className={`flex items-center gap-2.5 ${className}`}>
-      {/* Emblem */}
-      <div className={`${iconSizes[size]} shrink-0 transition-transform hover:scale-105 duration-200`}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/logo-icon.svg"
-          alt="AnnaSathi Logo"
-          className="w-full h-full object-contain"
-        />
+      {/* FoodLoop Loop Emblem */}
+      <div
+        className={`${iconSizes[size]} rounded-2xl bg-gradient-to-br from-brand-600 to-emerald-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-brand-600/20 transition-transform hover:scale-105 duration-200`}
+      >
+        <Leaf className="w-5 h-5 text-emerald-100" />
       </div>
 
       {variant !== "icon" && (
@@ -46,24 +43,24 @@ export default function Logo({
                 variant === "white" ? "text-white" : "text-slate-900"
               }`}
             >
-              Anna<span className="text-brand-500">Sathi</span>
+              Food<span className="text-brand-600">Loop</span>
             </span>
             <span
-              className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
+              className={`text-[9px] uppercase font-extrabold px-1.5 py-0.5 rounded tracking-wider ${
                 variant === "white"
                   ? "bg-slate-800 text-brand-300"
-                  : "bg-brand-100 text-brand-800"
+                  : "bg-brand-50 text-brand-700 border border-brand-200"
               }`}
             >
-              2.0
+              Rescue
             </span>
           </div>
           <p
-            className={`text-[10px] tracking-wider uppercase font-semibold leading-tight mt-1 ${
+            className={`text-[9px] tracking-wider uppercase font-bold leading-tight mt-1 ${
               variant === "white" ? "text-slate-400" : "text-slate-500"
             }`}
           >
-            Smart Food Rescue
+            Food Rescue & Recovery
           </p>
         </div>
       )}

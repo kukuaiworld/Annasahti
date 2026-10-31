@@ -1,8 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { appConfig } from './config/app.config';
 import { databaseConfig } from './config/database.config';
+import { authConfig } from './config/auth.config';
 import { DatabaseModule } from './database/database.module';
+import { AuthModule } from './auth/auth.module';
+import { MeModule } from './me/me.module';
+import { OrganisationsModule } from './organisations/organisations.module';
 import { SafeChainModule } from './safechain/safechain.module';
 import { FoodBatchesModule } from './food-batches/food-batches.module';
 import { InspectionsModule } from './inspections/inspections.module';
@@ -17,10 +23,17 @@ import { HealthModule } from './health/health.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [appConfig, databaseConfig],
+      load: [appConfig, databaseConfig, authConfig],
       envFilePath: ['.env', '.env.example'],
     }),
+    // BUG-11 fix: default rate limiting against brute force / DoS on every endpoint
+    ThrottlerModule.forRoot([
+      { ttl: 60000, limit: 120 },
+    ]),
     DatabaseModule,
+    AuthModule,
+    MeModule,
+    OrganisationsModule,
     SafeChainModule,
     FoodBatchesModule,
     InspectionsModule,
@@ -30,6 +43,9 @@ import { HealthModule } from './health/health.module';
     ImpactModule,
     RecognitionModule,
     HealthModule,
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule {}

@@ -6,6 +6,7 @@ export interface DatabaseConfig {
   password?: string;
   database: string;
   ssl?: boolean;
+  sslRejectUnauthorized?: boolean;
 }
 
 export const databaseConfig = (): { database: DatabaseConfig } => ({
@@ -17,5 +18,6 @@ export const databaseConfig = (): { database: DatabaseConfig } => ({
     password: process.env.POSTGRES_PASSWORD || process.env.DATABASE_PASSWORD,
     database: process.env.POSTGRES_DB || process.env.DATABASE_NAME || 'postgres',
     ssl: process.env.DATABASE_SSL === 'true' || process.env.NODE_ENV === 'production',
+    sslRejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
   },
 });

@@ -34,7 +34,11 @@ describe('AllocationsService', () => {
 
   beforeEach(async () => {
     clientMock = {
-      query: jest.fn(),
+      // Delegates to dbMock.queryOne stubs; per-test clientMock.query stubs take precedence
+      query: jest.fn(async (sql: string, params?: any[]) => {
+        const row = await dbMock.queryOne(sql, params);
+        return { rows: row === undefined || row === null ? [] : [row] };
+      }),
     };
 
     dbMock = {
@@ -211,6 +215,8 @@ describe('AllocationsService', () => {
           eventType: 'allocation_accepted',
           batchId: 'batch-1',
         }),
+        expect.anything(),
+
       );
     });
 
@@ -264,6 +270,169 @@ describe('AllocationsService', () => {
           eventType: 'allocation_rejected',
           batchId: 'batch-1',
         }),
+        expect.anything(),
+
+      );
+    });
+  });
+
+  describe('Allocation list default-deny (Phase 0, Task D)', () => {
+    const captureSql = () => {
+      dbMock.queryOne = jest.fn().mockImplementation((sql: string, params?: any[]) => {
+        (dbMock as any).countSql = sql;
+        (dbMock as any).countParams = (params ?? []).slice();
+        return Promise.resolve({ total: 0 });
+      });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+    };
+
+    it('org-less non-admin receives a deliberate ForbiddenException, never platform-wide data', async () => {
+      const inspector: AuthUser = {
+        id: 'inspector-uuid',
+        fullName: 'Inspector Ivor',
+        role: AppRole.INSPECTOR,
+      };
+
+      await expect(service.listAllocations({}, inspector)).rejects.toThrow(ForbiddenException);
+      expect(dbMock.queryOne).not.toHaveBeenCalled();
+    });
+
+    it('volunteer receives only allocations they deliver (no org fallout)', async () => {
+      const volunteer: AuthUser = {
+        id: 'volunteer-uuid',
+        fullName: 'Volunteer Sarah',
+        role: AppRole.VOLUNTEER,
+      };
+      captureSql();
+
+      const result = await service.listAllocations({}, volunteer);
+
+      expect(result.data).toEqual([]);
+      const sql = (dbMock as any).countSql as string;
+      expect(sql).toContain('dt.allocation_id = a.id AND dt.volunteer_id = $1');
+      expect(sql).not.toContain('recipient_organisation_id = $1 OR');
+      expect((dbMock as any).countParams).toEqual([volunteer.id]);
+    });
+
+    it('organisation member is scoped to records touching their own organisation', async () => {
+      captureSql();
+
+      const result = await service.listAllocations({}, mockRecipientUser);
+
+      expect(result.data).toEqual([]);
+      const sql = (dbMock as any).countSql as string;
+      expect(sql).toContain('a.recipient_organisation_id = $1 OR b.donor_organisation_id = $1');
+      expect((dbMock as any).countParams).toEqual([mockRecipientUser.organisationId]);
+    });
+
+    it('admin keeps platform-wide access and pagination still works', async () => {
+      dbMock.queryOne = jest.fn().mockImplementation((sql: string, params?: any[]) => {
+        (dbMock as any).countParams = (params ?? []).slice();
+        return Promise.resolve({ total: 1 });
+      });
+      dbMock.query = jest.fn().mockResolvedValue([{ id: 'alloc-1' }]);
+
+      const result = await service.listAllocations({ page: 2, limit: 1 }, mockAdminUser);
+
+      expect(result.data).toEqual([{ id: 'alloc-1' }]);
+      // Admin's own scope binds nothing; pagination params follow
+      expect((dbMock as any).countParams).toEqual([]);
+      expect(result.meta).toMatchObject({ total: 1, page: 2, limit: 1, totalPages: 1 });
+    });
+  });
+
+  describe('Allocation detail least-privilege (Phase 0, Task E)', () => {
+    const allocationRow = (overrides: Record<string, unknown> = {}) => ({
+      id: 'alloc-1',
+      batch_id: 'batch-1',
+      recipient_organisation_id: 'recip-org-uuid',
+      donor_organisation_id: 'donor-org-uuid',
+      allocated_quantity: 20,
+      quantity_unit: 'kg',
+      status: 'accepted',
+      ...overrides,
+    });
+
+    it('volunteer with a real delivery task relationship may view the allocation', async () => {
+      dbMock.queryOne
+        .mockResolvedValueOnce(allocationRow()) // allocation lookup
+        .mockResolvedValueOnce({ allowed: true }); // delivery-task relationship check
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      const volunteer: AuthUser = {
+        id: 'volunteer-uuid',
+        fullName: 'Volunteer Sarah',
+        role: AppRole.VOLUNTEER,
+      };
+
+      const result = await service.getAllocationById('alloc-1', volunteer);
+
+      expect(result.id).toBe('alloc-1');
+      // Volunteer never sees volunteers' personal phone numbers
+      expect(result.deliveryTasks).toEqual([]);
+    });
+
+    it('volunteer WITHOUT a delivery relationship is concealed with 404 (no volunteer enumeration)', async () => {
+      dbMock.queryOne
+        .mockResolvedValueOnce(allocationRow())
+        .mockResolvedValueOnce({ allowed: false });
+
+      const strangerVolunteer: AuthUser = {
+        id: 'other-volunteer-uuid',
+        fullName: 'Volunteer John',
+        role: AppRole.VOLUNTEER,
+      };
+
+      await expect(service.getAllocationById('alloc-1', strangerVolunteer)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('non-member non-volunteer (unrelated inspector) is concealed with 404', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(allocationRow());
+
+      const inspector: AuthUser = {
+        id: 'inspector-uuid',
+        fullName: 'Inspector Ivor',
+        role: AppRole.INSPECTOR,
+      };
+
+      await expect(service.getAllocationById('alloc-1', inspector)).rejects.toThrow(NotFoundException);
+    });
+
+    it('donor organisation member keeps full access including volunteer contact', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(allocationRow());
+      dbMock.query.mockResolvedValue([{ id: 'dt-1', volunteer_phone: '+995555000111' }]);
+
+      const result = await service.getAllocationById('alloc-1', mockDonorUser);
+
+      expect(result.deliveryTasks[0].volunteer_phone).toBe('+995555000111');
+    });
+
+    it('recipient organisation member keeps full access including volunteer contact', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(allocationRow());
+      dbMock.query.mockResolvedValue([{ id: 'dt-1', volunteer_phone: '+995555000111' }]);
+
+      const result = await service.getAllocationById('alloc-1', mockRecipientUser);
+
+      expect(result.deliveryTasks[0].volunteer_phone).toBe('+995555000111');
+    });
+
+    it('admin retains full access including volunteer contact', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(allocationRow());
+      dbMock.query.mockResolvedValue([{ id: 'dt-1', volunteer_phone: '+995555000111' }]);
+
+      const result = await service.getAllocationById('alloc-1', mockAdminUser);
+
+      expect(result.deliveryTasks[0].volunteer_phone).toBe('+995555000111');
+    });
+
+    it('unrelated organisation member of another donor is concealed with 404', async () => {
+      const otherDonorBatch = allocationRow({ donor_organisation_id: 'another-donor-org' });
+      dbMock.queryOne.mockResolvedValueOnce(otherDonorBatch);
+
+      await expect(service.getAllocationById('alloc-1', mockDonorUser)).rejects.toThrow(
+        NotFoundException,
       );
     });
   });

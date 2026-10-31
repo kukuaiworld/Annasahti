@@ -1,46 +1,94 @@
-import { FoodSafetyTier, FoodSafetyInspection } from "../types";
+/**
+ * FoodLoop Food Safety Guidelines & Inspection Types
+ *
+ * CRITICAL FOOD SAFETY RULES:
+ * 1. AI or client heuristics must NEVER approve food safety for human or animal consumption.
+ * 2. Food must remain in HOLD / PENDING_INSPECTION status until an authorized human
+ *    food safety inspector records an explicit decision via the backend API.
+ * 3. Human consumption and animal suitability are strictly separate decisions.
+ * 4. Animal suitability must consider species-specific nutritional and toxicological requirements.
+ *    (e.g., allium/onions, cacao/chocolate, high spices are toxic to dogs/cattle).
+ * 5. Spoiled, contaminated, or temperature-abused food must NEVER be automatically
+ *    diverted to animal consumption.
+ */
 
-export interface InspectionChecklist {
-  visualCheck: boolean;
-  smellCheck: boolean;
+export enum InspectionDecision {
+  PENDING = 'pending',
+  APPROVED_HUMAN = 'approved_human',
+  APPROVED_ANIMAL = 'approved_animal',
+  REJECTED = 'rejected',
+  REQUIRES_REVIEW = 'requires_review',
+  APPROVED_ORGANIC_WASTE = 'approved_organic_waste',
+}
+
+export enum AnimalSpecies {
+  CANINE = 'canine',
+  FELINE = 'feline',
+  BOVINE = 'bovine',
+  PORCINE = 'porcine',
+  POULTRY = 'poultry',
+  EQUINE = 'equine',
+  OTHER = 'other',
+}
+
+export interface HumanInspectionChecklist {
+  batchId: string;
+  temperatureCelsius?: number;
   packagingIntact: boolean;
-  coreTemperature: number;
-  preparationHoursAgo: number;
+  visualCheckPassed: boolean;
+  odourCheckPassed: boolean;
+  handlingNotes?: string;
+  decision: InspectionDecision;
+  targetSpecies?: AnimalSpecies[];
+  rejectionReason?: string;
 }
 
 /**
- * Classifies food into appropriate safety tier based on FSSAI guidelines
+ * Validates that an inspection record conforms to human safety verification rules
+ * before transmission to the backend inspection endpoint.
  */
-export function evaluateFoodSafetyTier(data: InspectionChecklist): {
-  tier: FoodSafetyTier;
-  reason: string;
+export function validateHumanInspection(data: HumanInspectionChecklist): {
+  isValid: boolean;
+  error?: string;
 } {
-  // If spoiled or smelling sour
-  if (!data.smellCheck || !data.visualCheck) {
+  if (!data.batchId) {
+    return { isValid: false, error: 'Batch ID is required for inspection.' };
+  }
+
+  // Enforce human decision requirement
+  if (!data.decision || data.decision === InspectionDecision.PENDING) {
+    return { isValid: false, error: 'An explicit authorized human inspection decision is required.' };
+  }
+
+  // Unsafe food cannot be routed to animal consumption
+  if (
+    data.decision === InspectionDecision.APPROVED_ANIMAL &&
+    (!data.visualCheckPassed || !data.odourCheckPassed)
+  ) {
     return {
-      tier: "tier4_compost_biofuel",
-      reason: "Visual or olfactive deterioration detected. Safe only for anaerobic industrial digestion.",
+      isValid: false,
+      error: 'Spoiled or contaminated food failing visual or odour checks must NEVER be routed to animal consumption.',
     };
   }
 
-  // If cooked > 6 hours ago in ambient tropical temperature
-  if (data.preparationHoursAgo > 6 && data.coreTemperature < 60 && data.coreTemperature > 5) {
+  // Animal suitability requires explicit target species consideration
+  if (
+    data.decision === InspectionDecision.APPROVED_ANIMAL &&
+    (!data.targetSpecies || data.targetSpecies.length === 0)
+  ) {
     return {
-      tier: "tier3_animal_feed",
-      reason: "Exceeded safe human consumption temperature window (>6 hours). Wholesome for cattle & sanctuary animals.",
+      isValid: false,
+      error: 'Animal suitability requires selecting verified target species to prevent species-specific poisoning.',
     };
   }
 
-  // Safe for direct human dining
-  if (data.coreTemperature >= 60 || data.coreTemperature <= 5) {
+  // Rejection requires explicit documentation
+  if (data.decision === InspectionDecision.REJECTED && !data.rejectionReason) {
     return {
-      tier: "tier1_human_immediate",
-      reason: "Core temperature meets FSSAI hot-holding (>60°C) or cold-holding (<5°C) standards.",
+      isValid: false,
+      error: 'A detailed rejection reason is required for any rejected batch.',
     };
   }
 
-  return {
-    tier: "tier2_human_prep",
-    reason: "Fresh produce/packaged food requiring kitchen washing/cooking before serving.",
-  };
+  return { isValid: true };
 }

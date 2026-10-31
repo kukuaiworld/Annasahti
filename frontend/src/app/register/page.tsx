@@ -3,252 +3,176 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  UserPlus,
-  Building,
-  Truck,
-  HeartHandshake,
-  PawPrint,
-  Factory,
-  CheckCircle2,
-  ShieldCheck,
-  Leaf,
-} from "lucide-react";
+import { UserPlus, CheckCircle2, AlertCircle, Leaf, ShieldAlert } from "lucide-react";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
-import { Role } from "@/types";
-import { storageService } from "@/services/storageService";
+import { useAuth } from "@/providers/auth-provider";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [role, setRole] = useState<Role>("donor");
-  const [orgName, setOrgName] = useState("");
+  const { signUp } = useAuth();
+
   const [contactName, setContactName] = useState("");
   const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [city, setCity] = useState("Delhi NCR");
-  const [licenseNumber, setLicenseNumber] = useState("");
+  const [password, setPassword] = useState("");
+  const [orgName, setOrgName] = useState("");
+  const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const roleRedirectMap: Record<Role, string> = {
-    donor: "/donor/dashboard",
-    volunteer: "/volunteer/dashboard",
-    recipient: "/recipient/dashboard",
-    "animal-welfare": "/animal-welfare/dashboard",
-    processor: "/processor/dashboard",
-    admin: "/admin/dashboard",
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+    setLoading(true);
 
-    const newUser = {
-      id: "usr-" + Date.now(),
-      name: contactName,
-      email,
-      role,
-      organization: orgName || contactName,
-      phone,
-      city,
-      verificationStatus: "verified" as const,
-      fssaiNumber: licenseNumber || "FSSAI-DEMO-2026",
-      joinedAt: new Date().toISOString().slice(0, 10),
-    };
+    try {
+      const { error } = await signUp(email, password, contactName);
+      if (error) {
+        setErrorMessage(error.message || "Failed to create account with Supabase Auth.");
+        setLoading(false);
+        return;
+      }
 
-    const currentUsers = storageService.getUsers();
-    storageService.updateUserVerification(newUser.id, "verified");
-
-    storageService.addAuditLog({
-      id: "log-" + Date.now(),
-      timestamp: new Date().toISOString(),
-      actor: contactName,
-      role,
-      action: "NEW_ORGANIZATION_REGISTERED",
-      details: `Registered ${orgName || contactName} as ${role.toUpperCase()} in ${city}`,
-      ipAddress: "127.0.0.1",
-    });
-
-    setSuccess(true);
-    setTimeout(() => {
-      router.push(roleRedirectMap[role]);
-    }, 1500);
+      setSuccess(true);
+      setLoading(false);
+    } catch (err: any) {
+      setErrorMessage(err.message || "An unexpected error occurred during registration.");
+      setLoading(false);
+    }
   };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 md:py-16">
-      <Breadcrumbs items={[{ label: "Register Organization" }]} />
+      <Breadcrumbs items={[{ label: "Register Account" }]} />
 
       <div className="max-w-xl mx-auto">
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-brand-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-3 shadow-md">
             <UserPlus className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">Join the AnnaSathi Network</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">Join FoodLoop</h1>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Choose your organization role to unlock your tailored redistribution portal
+            Register your secure account to participate in surplus food recovery
           </p>
         </div>
 
         {success ? (
-          <div className="bg-white p-8 rounded-3xl border border-emerald-300 shadow-sm text-center space-y-3 animate-fade-in">
+          <div className="bg-white p-8 rounded-3xl border border-emerald-300 shadow-sm text-center space-y-4">
             <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
-            <h3 className="text-xl font-bold text-slate-900">Account Verified & Activated!</h3>
-            <p className="text-xs text-slate-600">
-              Redirecting you to your dedicated {role.toUpperCase()} dashboard...
+            <h3 className="text-xl font-bold text-slate-900">Account Created Successfully!</h3>
+            <p className="text-xs text-slate-600 leading-relaxed max-w-md mx-auto">
+              Your FoodLoop account has been registered with Supabase Auth. If email confirmation is enabled, please verify your email address.
             </p>
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-left text-xs text-slate-600 space-y-2">
+              <div className="flex items-center gap-2 font-semibold text-slate-800">
+                <ShieldAlert className="w-4 h-4 text-brand-600 shrink-0" />
+                <span>Account Provisioning Note:</span>
+              </div>
+              <p>
+                In accordance with FoodLoop security and FSSAI standards, application roles (Donor, Inspector, Recipient) are granted by organisation administrators or verified through the platform directorate. Unprovisioned accounts cannot execute sensitive operations.
+              </p>
+            </div>
+            <div className="pt-2">
+              <Link
+                href="/login"
+                className="inline-block px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition"
+              >
+                Proceed to Sign In
+              </Link>
+            </div>
           </div>
         ) : (
           <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-200 shadow-sm">
-            {/* Step 1: Role Selector */}
-            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 mb-3">
-              1. Select Your Stakeholder Role
-            </label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-6">
-              {[
-                { r: "donor" as Role, label: "Food Donor", icon: Building },
-                { r: "volunteer" as Role, label: "Volunteer Courier", icon: Truck },
-                { r: "recipient" as Role, label: "Recipient NGO", icon: HeartHandshake },
-                { r: "animal-welfare" as Role, label: "Animal Shelter", icon: PawPrint },
-                { r: "processor" as Role, label: "Bio-Energy Unit", icon: Factory },
-              ].map((item) => {
-                const Icon = item.icon;
-                const isSelected = role === item.r;
-                return (
-                  <button
-                    key={item.r}
-                    type="button"
-                    onClick={() => setRole(item.r)}
-                    className={`p-3 rounded-2xl text-left border flex flex-col justify-between transition ${
-                      isSelected
-                        ? "border-brand-600 bg-brand-50 ring-2 ring-brand-500/20"
-                        : "border-slate-200 hover:bg-slate-50"
-                    }`}
-                  >
-                    <Icon className={`w-5 h-5 mb-2 ${isSelected ? "text-brand-600" : "text-slate-400"}`} />
-                    <span className="text-xs font-bold text-slate-800">{item.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {errorMessage && (
+              <div className="p-4 mb-5 rounded-2xl bg-red-50 border border-red-200 text-red-800 text-xs font-semibold flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
 
-            {/* Step 2: Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
-              <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 pt-2 border-t border-slate-100">
-                2. Organization & Credential Details
-              </label>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Organization / Commercial Entity Name
+                  Full Name
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder={
-                    role === "donor"
-                      ? "e.g. Royal Palace Banquets"
-                      : role === "volunteer"
-                      ? "e.g. Self / Electric Courier Group"
-                      : "e.g. Bal Seva Orphanage Trust"
-                  }
+                  placeholder="e.g. Priya Sharma"
+                  value={contactName}
+                  onChange={(e) => setContactName(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Organisation Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Grand Banquet / City Shelter (Optional)"
                   value={orgName}
                   onChange={(e) => setOrgName(e.target.value)}
                   className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Contact Person</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Full name"
-                    value={contactName}
-                    onChange={(e) => setContactName(e.target.value)}
-                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Mobile Phone</label>
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+91 98000 00000"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">Official Email</label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="ops@organization.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">City / Hub</label>
-                  <select
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-                  >
-                    <option>Delhi NCR</option>
-                    <option>Bengaluru</option>
-                    <option>Mumbai</option>
-                    <option>Hyderabad</option>
-                    <option>Chennai</option>
-                    <option>Pune</option>
-                  </select>
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  {role === "donor"
-                    ? "FSSAI License / Registration No."
-                    : role === "recipient"
-                    ? "NGO Darpan ID / Trust Registration No."
-                    : role === "volunteer"
-                    ? "Driver's License / Vehicle Registration"
-                    : "Pollution Control Board / Municipal Reg. No."}
+                  Official Email Address
                 </label>
                 <input
-                  type="text"
+                  type="email"
                   required
-                  placeholder="e.g. 10018011003421"
-                  value={licenseNumber}
-                  onChange={(e) => setLicenseNumber(e.target.value)}
+                  placeholder="contact@organisation.org"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
 
-              <div className="flex items-start gap-2 pt-2 text-[11px] text-slate-500">
-                <ShieldCheck className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  minLength={8}
+                  placeholder="Minimum 8 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full text-xs p-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 space-y-1">
+                <span className="font-bold block">Verified Food Safety Policy:</span>
                 <span>
-                  By registering, you agree to adhere to FSSAI safe food handling protocols and the Good Samaritan Act guidelines.
+                  Self-registration creates an authenticated profile. Platform privileges and organization access are validated against verified credentials before food redistribution is permitted.
                 </span>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition"
+                disabled={loading}
+                className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-60"
               >
-                Complete Registration & Open Dashboard
+                {loading ? (
+                  <span>Registering Account with Supabase...</span>
+                ) : (
+                  <>
+                    <UserPlus className="w-4 h-4" />
+                    <span>Create Account</span>
+                  </>
+                )}
               </button>
             </form>
 
             <div className="mt-6 pt-6 border-t border-slate-100 text-center text-xs text-slate-500">
               <span>Already registered? </span>
               <Link href="/login" className="font-bold text-brand-600 hover:text-brand-700">
-                Sign In
+                Sign in here
               </Link>
             </div>
           </div>

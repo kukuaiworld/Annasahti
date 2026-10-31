@@ -1,24 +1,31 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
+  HttpException,
   Injectable,
+  Logger,
   Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { DatabaseService } from '../../database/database.service';
-import { AppRole } from '../enums/app.enums';
-import { AuthUser } from '../interfaces/auth-user.interface';
+import { JwtVerificationService } from '../../auth/jwt-verification.service';
+import { AuthService } from '../../auth/auth.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { ALLOW_UNPROVISIONED_KEY } from '../decorators/allow-unprovisioned.decorator';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
+  private readonly logger = new Logger(AuthGuard.name);
+
   constructor(
-    private readonly db: DatabaseService,
+    private readonly jwtVerificationService: JwtVerificationService,
+    private readonly authService: AuthService,
     @Optional() private readonly reflector?: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 1. Check if endpoint is marked public via @Public()
     if (this.reflector) {
       const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
         context.getHandler(),
@@ -30,80 +37,50 @@ export class AuthGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest();
+
+    // 2. Extract Authorization Bearer token.
+    // Client-provided identity headers (x-user-id, x-user-role, etc.) are strictly ignored.
     const authHeader = request.headers['authorization'];
-    const customUserId = request.headers['x-user-id'] as string;
-    const customRole = request.headers['x-user-role'] as AppRole;
-    const customOrgId = request.headers['x-organisation-id'] as string;
-
-    let userId: string | null = null;
-    let role: AppRole = AppRole.DONOR;
-
-    if (customUserId) {
-      userId = customUserId;
-      if (customRole && Object.values(AppRole).includes(customRole)) {
-        role = customRole;
-      }
-    } else if (authHeader && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.substring(7);
-      // Decode JWT payload without third-party library dependency
-      try {
-        const parts = token.split('.');
-        if (parts.length === 3) {
-          const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
-          userId = payload.sub || payload.id;
-          if (payload.role && Object.values(AppRole).includes(payload.role)) {
-            role = payload.role;
-          }
-        } else {
-          userId = token;
-        }
-      } catch {
-        userId = token;
-      }
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+      throw new UnauthorizedException('Authentication token required.');
     }
 
-    if (!userId) {
-      throw new UnauthorizedException('Authentication token or user credentials required.');
+    const token = authHeader.substring(7).trim();
+    if (!token) {
+      throw new UnauthorizedException('Authentication token required.');
     }
-
-    // Attempt to lookup user profile from database
-    let fullName = 'Authenticated User';
-    let organisationId = customOrgId;
-    let organisationRole = customRole;
 
     try {
-      const profile = await this.db.queryOne(
-        `SELECT id, full_name, role FROM public.profiles WHERE id = $1`,
-        [userId],
-      );
+      // 3. Cryptographically verify JWT signature, issuer, audience, and expiration
+      const verifiedPayload = await this.jwtVerificationService.verifyToken(token);
 
-      if (profile) {
-        fullName = profile.full_name;
-        role = profile.role || role;
+      // 4. Resolve authenticated application context with strict least-privilege guarantees
+      const user = await this.authService.resolveUserContext(verifiedPayload);
 
-        const membership = await this.db.queryOne(
-          `SELECT organisation_id, role FROM public.organisation_members WHERE user_id = $1 LIMIT 1`,
-          [userId],
-        );
+      // 5. Attach strongly typed, verified user context to request
+      request.user = user;
 
-        if (membership) {
-          organisationId = membership.organisation_id;
-          organisationRole = membership.role;
+      // 6. Enforce that unprovisioned users (missing profile) cannot access protected operations
+      if (!user.role) {
+        const allowUnprovisioned = this.reflector
+          ? this.reflector.getAllAndOverride<boolean>(ALLOW_UNPROVISIONED_KEY, [
+              context.getHandler(),
+              context.getClass(),
+            ])
+          : false;
+
+        if (!allowUnprovisioned) {
+          throw new ForbiddenException('User profile not provisioned. Access denied.');
         }
       }
-    } catch {
-      // If DB lookup fails during tests, keep resolved headers
+
+      return true;
+    } catch (err: any) {
+      if (err instanceof HttpException) {
+        throw err;
+      }
+      this.logger.warn(`Authentication failure: ${err.message}`);
+      throw new UnauthorizedException('Authentication failed.');
     }
-
-    const user: AuthUser = {
-      id: userId,
-      fullName,
-      role,
-      organisationId,
-      organisationRole,
-    };
-
-    request.user = user;
-    return true;
   }
 }

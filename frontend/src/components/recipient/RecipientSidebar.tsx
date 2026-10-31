@@ -18,6 +18,7 @@ export default function RecipientSidebar() {
 
   const navItems = [
     { label: "Shelter Dashboard", href: "/recipient/dashboard", icon: LayoutDashboard },
+    { label: "Incoming Allocations", href: "/recipient/allocations", icon: HeartHandshake },
     { label: "Meal Demands", href: "/recipient/requests", icon: ClipboardList },
     { label: "Request Food Help", href: "/recipient/new-request", icon: PlusCircle },
     { label: "Pantry & Stock", href: "/recipient/inventory", icon: PackageCheck },
@@ -34,7 +35,7 @@ export default function RecipientSidebar() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white text-base">AnnaSathi</span>
+              <span className="font-bold text-white text-base">FoodLoop</span>
               <span className="text-[10px] bg-purple-500/20 text-purple-400 px-1.5 py-0.2 rounded font-semibold uppercase">
                 Shelter
               </span>

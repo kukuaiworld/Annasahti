@@ -1,76 +1,133 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   HeartHandshake,
-  PlusCircle,
-  Users,
   CheckCircle2,
   Clock,
   ArrowRight,
   ShieldCheck,
-  QrCode,
   Truck,
+  RefreshCw,
+  AlertTriangle,
+  Building2,
+  Scale,
+  PackageCheck,
+  Inbox,
 } from "lucide-react";
 import RecipientHeader from "@/components/recipient/RecipientHeader";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
 import StatusBadge from "@/components/shared/StatusBadge";
-import QRModal from "@/components/shared/QRModal";
-import { storageService } from "@/services/storageService";
-import { RecipientRequest, Donation } from "@/types";
+import { allocationsApi } from "@/services/api/allocations";
+import { deliveriesApi } from "@/services/api/deliveries";
+import { FoodAllocationRecord } from "@/types/allocations";
+import { DeliveryTaskRecord } from "@/types/deliveries";
+import { useAuth } from "@/providers/auth-provider";
+import { ApiError } from "@/services/api/api-errors";
 
 export default function RecipientDashboardPage() {
-  const [requests, setRequests] = useState<RecipientRequest[]>([]);
-  const [incomingDonation, setIncomingDonation] = useState<Donation | null>(null);
-  const [showQrModal, setShowQrModal] = useState(false);
+  const { profile, organisation } = useAuth();
+  const [allocations, setAllocations] = useState<FoodAllocationRecord[]>([]);
+  const [deliveries, setDeliveries] = useState<DeliveryTaskRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Parallel fetch allocations and deliveries for active recipient
+      const [allocRes, delivRes] = await Promise.all([
+        allocationsApi.listAllocations({ limit: 10 }),
+        deliveriesApi.listDeliveries({ limit: 10 }),
+      ]);
+      setAllocations(allocRes.data || []);
+      setDeliveries(delivRes.data || []);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        setError(`Backend Error (${err.statusCode}): ${err.message}`);
+      } else {
+        setError(err.message || "Failed to load recipient dashboard data");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    setRequests(storageService.getRequests());
-    // Find the active delivery coming to Asha Kiran
-    const don = storageService.getDonations().find((d) => d.id === "don-101");
-    if (don) setIncomingDonation(don);
-  }, []);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Derived metrics from verified backend data
+  const pendingAllocations = allocations.filter((a) => a.status === "pending");
+  const acceptedAllocations = allocations.filter((a) => a.status === "accepted");
+  const inTransitDeliveries = deliveries.filter((d) => d.status === "in_transit" || d.status === "pickup_confirmed");
+  const completedDeliveries = deliveries.filter((d) => d.status === "delivered" || d.status === "discrepancy_reported");
 
   return (
     <div className="flex-1 flex flex-col">
       <RecipientHeader
-        title="Shelter Kitchen Operations"
-        subtitle="Asha Kiran Orphanage & Child Care • Timarpur, Delhi"
+        title="Shelter Care & Kitchen Operations"
+        subtitle={`${organisation?.name || profile?.fullName || "Recipient Organisation"} • Verified Shelter Hub`}
       />
 
       <div className="p-6 sm:p-8 space-y-6 flex-1 max-w-7xl">
-        <Breadcrumbs items={[{ label: "Recipient Portal", href: "/recipient/dashboard" }, { label: "Shelter Overview" }]} />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <Breadcrumbs
+            items={[{ label: "Recipient Portal", href: "/recipient/dashboard" }, { label: "Dashboard" }]}
+          />
+          <button
+            onClick={fetchDashboardData}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm transition disabled:opacity-50 self-start sm:self-auto"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
 
-        {/* Top Metric Cards */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-xs text-red-800 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={fetchDashboardData}
+              className="px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-900 text-xs font-semibold transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Real KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500 font-medium">Resident Children</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">120</div>
-              <span className="text-[10px] text-purple-600 font-semibold mt-1 block">Full daily boarding</span>
+              <span className="text-xs text-slate-500 font-medium">Offers Awaiting Review</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : pendingAllocations.length}
+              </div>
+              <span className="text-[10px] text-purple-600 font-semibold mt-1 block">
+                Pending your acceptance
+              </span>
             </div>
             <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold">
-              <Users className="w-5 h-5" />
+              <Inbox className="w-5 h-5" />
             </div>
           </div>
 
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500 font-medium">Meals Received (Month)</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">3,420</div>
-              <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">100% FSSAI Inspected</span>
-            </div>
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
-              <CheckCircle2 className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div>
-              <span className="text-xs text-slate-500 font-medium">Ration Budget Saved</span>
-              <div className="text-2xl font-black text-brand-700 mt-1">₹85,400</div>
-              <span className="text-[10px] text-brand-600 font-semibold mt-1 block">Redirected to education</span>
+              <span className="text-xs text-slate-500 font-medium">Accepted Allocations</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : acceptedAllocations.length}
+              </div>
+              <span className="text-[10px] text-brand-600 font-semibold mt-1 block">
+                Reserved for your shelter
+              </span>
             </div>
             <div className="w-11 h-11 rounded-xl bg-brand-50 text-brand-700 flex items-center justify-center font-bold">
               <HeartHandshake className="w-5 h-5" />
@@ -79,116 +136,173 @@ export default function RecipientDashboardPage() {
 
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500 font-medium">Dietary Requirement</span>
-              <div className="text-lg font-black text-slate-900 mt-1">Strict Veg</div>
-              <span className="text-[10px] text-slate-400 font-semibold mt-1 block">Zero allergen alerts</span>
+              <span className="text-xs text-slate-500 font-medium">In-Transit Couriers</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : inTransitDeliveries.length}
+              </div>
+              <span className="text-[10px] text-blue-600 font-semibold mt-1 block">
+                Volunteers en route
+              </span>
             </div>
             <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
-              <ShieldCheck className="w-5 h-5" />
+              <Truck className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-xs text-slate-500 font-medium">Verified Confirmations</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : completedDeliveries.length}
+              </div>
+              <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">
+                Officially received at dock
+              </span>
+            </div>
+            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
+              <PackageCheck className="w-5 h-5" />
             </div>
           </div>
         </div>
 
-        {/* Incoming Delivery Alert Banner */}
-        {incomingDonation && (
-          <div className="bg-white rounded-3xl border border-purple-300 p-6 sm:p-8 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-              <div className="flex items-center gap-3">
-                <span className="w-3 h-3 rounded-full bg-purple-600 animate-ping" />
-                <h3 className="font-bold text-slate-900 text-base">Incoming Hot Meal Delivery</h3>
-                <StatusBadge status={incomingDonation.status} size="sm" />
-              </div>
-
-              <button
-                onClick={() => setShowQrModal(true)}
-                className="px-4 py-2 bg-purple-50 text-purple-800 hover:bg-purple-100 rounded-xl text-xs font-bold border border-purple-200 transition flex items-center gap-1.5"
-              >
-                <QrCode className="w-3.5 h-3.5 text-purple-700" />
-                <span>Verify Consignment Tag</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 block text-[10px] font-bold uppercase">Consignment Code</span>
-                <span className="font-mono font-bold text-slate-900">{incomingDonation.trackingCode}</span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 block text-[10px] font-bold uppercase">Source Donor</span>
-                <span className="font-bold text-slate-900">{incomingDonation.donorName}</span>
-              </div>
-              <div className="p-3 bg-slate-50 rounded-xl">
-                <span className="text-slate-400 block text-[10px] font-bold uppercase">Payload</span>
-                <span className="font-bold text-purple-700">{incomingDonation.totalKg} kg (~{incomingDonation.estimatedServings} servings)</span>
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-purple-50 border border-purple-200 text-xs text-purple-900 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Truck className="w-4 h-4 text-purple-600" />
-                <span>Assigned Courier: <strong>{incomingDonation.assignedVolunteerName}</strong> is 12 mins away.</span>
-              </div>
-              <Link href="/food-trace" className="font-bold text-purple-700 underline text-[11px]">
-                Trace Live Route →
-              </Link>
+        {/* Priority Deliveries Awaiting Dock Confirmation */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                Active Deliveries En Route to Your Shelter
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Physical inspection required at arrival dock before signing delivery confirmation
+              </p>
             </div>
           </div>
-        )}
 
-        {/* Requests Status */}
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          {loading ? (
+            <div className="p-6 space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : deliveries.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 space-y-1">
+              <Truck className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+              <p className="font-semibold text-slate-700">No active deliveries in transit.</p>
+              <p className="text-slate-400">Accepted allocations will display courier milestones here.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {deliveries.map((deliv) => {
+                const isConfirmed = ["delivered", "discrepancy_reported"].includes(deliv.status);
+                return (
+                  <div
+                    key={deliv.id}
+                    className="p-4 hover:bg-slate-50/80 transition flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                          {deliv.batch_code || "CONSIGNMENT"}
+                        </span>
+                        <StatusBadge status={deliv.status} size="sm" />
+                      </div>
+                      <h3 className="font-bold text-slate-900 text-sm">{deliv.food_name}</h3>
+                      <div className="flex items-center gap-3 text-slate-500 text-[11px]">
+                        <span>From: <strong>{deliv.donor_name}</strong></span>
+                        <span>Quantity: <strong>{deliv.allocated_quantity} {deliv.quantity_unit}</strong></span>
+                        <span>Courier: <strong>{deliv.volunteer_name || "Volunteer Courier"}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {!isConfirmed ? (
+                        <Link
+                          href={`/recipient/deliveries/${deliv.id}/confirm`}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-sm transition"
+                        >
+                          <PackageCheck className="w-3.5 h-3.5" />
+                          <span>Confirm Receipt</span>
+                        </Link>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold text-xs bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          <span>Receipt Confirmed</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Incoming Allocation Offers Quick List */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
             <div>
-              <h3 className="font-bold text-slate-900 text-sm">Active Meal Requirement Tickets</h3>
-              <p className="text-xs text-slate-500">Track matched donations or post urgent breakfast/dinner requirements</p>
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                Pending Allocation Offers ({pendingAllocations.length})
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Donations matched and offered by local commercial kitchens
+              </p>
             </div>
             <Link
-              href="/recipient/new-request"
-              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+              href="/recipient/allocations"
+              className="text-xs font-bold text-purple-600 hover:text-purple-700 flex items-center gap-1 transition"
             >
-              <PlusCircle className="w-3.5 h-3.5" />
-              <span>New Ticket</span>
+              <span>View All Allocations</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
 
-          <div className="space-y-3">
-            {requests.slice(0, 3).map((req) => (
-              <div
-                key={req.id}
-                className="p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-              >
-                <div>
-                  <h4 className="font-bold text-slate-900">{req.organizationName}</h4>
-                  <p className="text-slate-500 text-[11px] mt-0.5">
-                    Needs: <strong>{req.requiredServings} servings</strong> ({req.dietaryPreference.replace(/_/g, " ")}) • {req.location}
-                  </p>
+          {loading ? (
+            <div className="p-6 space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : pendingAllocations.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 space-y-1">
+              <Inbox className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+              <p className="font-semibold text-slate-700">No pending offers.</p>
+              <p className="text-slate-400">All incoming donation allocations have been reviewed.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {pendingAllocations.map((alloc) => (
+                <div
+                  key={alloc.id}
+                  className="p-4 hover:bg-slate-50/80 transition flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-purple-800 bg-purple-50 px-2 py-0.5 rounded text-[11px]">
+                        {alloc.batch_code || "BATCH"}
+                      </span>
+                      <StatusBadge status={alloc.status} size="sm" />
+                    </div>
+                    <h3 className="font-bold text-slate-900 text-sm">{alloc.food_name}</h3>
+                    <div className="flex items-center gap-3 text-slate-500 text-[11px]">
+                      <span>Donor: <strong>{alloc.donor_name}</strong></span>
+                      <span>Offered: <strong>{alloc.allocated_quantity} {alloc.quantity_unit}</strong></span>
+                    </div>
+                  </div>
+
+                  <Link
+                    href="/recipient/allocations"
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-700 transition self-start md:self-auto"
+                  >
+                    <span>Review Offer</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
                 </div>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={req.urgencyLevel} size="sm" />
-                  <StatusBadge status={req.status} size="sm" />
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-
-      {/* QR Modal */}
-      {incomingDonation && (
-        <QRModal
-          isOpen={showQrModal}
-          onClose={() => setShowQrModal(false)}
-          title={`Incoming Food Tag: ${incomingDonation.trackingCode}`}
-          code={incomingDonation.trackingCode}
-          details={{
-            donor: incomingDonation.donorName,
-            items: incomingDonation.foodItems.map((f) => f.name).join(", "),
-            servings: incomingDonation.estimatedServings,
-            weight: `${incomingDonation.totalKg} kg`,
-            tier: incomingDonation.inspection?.assignedTier,
-          }}
-        />
-      )}
     </div>
   );
 }

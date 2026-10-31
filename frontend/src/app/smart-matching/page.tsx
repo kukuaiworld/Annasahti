@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
 import { storageService } from "@/services/storageService";
-import { calculateMatchScore, performAutoMatch } from "@/services/smartMatchingService";
 import { Donation, RecipientRequest } from "@/types";
 
 export default function SmartMatchingPage() {
@@ -54,10 +53,14 @@ export default function SmartMatchingPage() {
     setDispatchedSuccess(null);
 
     const scored = requests.map((req) => {
-      const match = calculateMatchScore(donation, req);
+      // Educational simulation calculation
+      const distance = req.distanceKm || 5.0;
+      const distanceScore = Math.max(0, 100 - distance * 6);
+      const isDonationVeg = donation.foodItems?.every((item) => item.dietaryType === "veg" || item.dietaryType === "vegan") ?? true;
+      const dietaryScore = (req.dietaryPreference === "veg_only" && !isDonationVeg) ? 0 : 100;
+      const totalScore = dietaryScore === 0 ? 0 : Math.min(100, Math.round(distanceScore * 0.5 + 40));
 
-      // Apply custom interactive weight adjustments
-      let customScore = match.score;
+      let customScore = totalScore;
       if (req.distanceKm > maxRadiusKm) {
         customScore = Math.max(0, customScore - 30);
       }
@@ -68,11 +71,10 @@ export default function SmartMatchingPage() {
       return {
         request: req,
         score: Math.min(100, Math.round(customScore)),
-        details: match,
+        details: { distanceKm: distance, dietaryMatch: dietaryScore > 0 },
       };
     });
 
-    // Sort descending by score
     scored.sort((a, b) => b.score - a.score);
     setMatchingResults(scored);
   };
@@ -84,14 +86,9 @@ export default function SmartMatchingPage() {
   }, [selectedDonationId, maxRadiusKm, strictVegOnly, urgencyWeight, donations, requests]);
 
   const handleDispatch = (targetRequestId: string) => {
-    const success = performAutoMatch(selectedDonationId);
-    if (success) {
-      setDispatchedSuccess("Mission dispatched! Volunteer route generated and recipient notified.");
-      loadData();
-    } else {
-      setDispatchedSuccess("Auto-matched and updated in active rescue queue.");
-      loadData();
-    }
+    setDispatchedSuccess(
+      "Simulator Demonstration: Live FoodLoop allocations require backend PostGIS verification and completed food safety inspections before courier routing."
+    );
   };
 
   const currentDonation = donations.find((d) => d.id === selectedDonationId);

@@ -35,8 +35,15 @@ describe('FoodBatchesService', () => {
     dbMock = {
       query: jest.fn(),
       queryOne: jest.fn(),
-      transaction: jest.fn((callback) => callback(dbMock)),
+      transaction: jest.fn(async (callback) => callback(dbMock)),
     };
+
+    // Base implementation delegates query → queryOne (mirrors the row-shaped
+    // client queries inside transactions); per-test stubs take precedence.
+    dbMock.query.mockImplementation(async (sql: string, params?: any[]) => {
+      const row = await dbMock.queryOne(sql, params);
+      return { rows: row === undefined || row === null ? [] : [row] };
+    });
 
     safechainMock = {
       recordEvent: jest.fn().mockResolvedValue({ id: 'event-uuid' }),
@@ -84,6 +91,8 @@ describe('FoodBatchesService', () => {
           batchId: 'batch-uuid-1',
           eventType: 'batch_created',
         }),
+        expect.anything(),
+
       );
     });
 
@@ -299,6 +308,8 @@ describe('FoodBatchesService', () => {
         expect.objectContaining({
           eventType: 'batch_cancelled',
         }),
+        expect.anything(),
+
       );
     });
 
@@ -312,6 +323,318 @@ describe('FoodBatchesService', () => {
       await expect(
         service.cancelBatch('transit-batch-uuid', 'Too late', mockDonorUser),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('Batch tenant isolation (Phase 0, Task B)', () => {
+    const otherOrgBatch = {
+      id: '55555555-5555-5555-5555-555555555555',
+      batch_code: 'FL-OTHER01',
+      donor_organisation_id: '99999999-9999-9999-9999-999999999999',
+      status: FoodBatchStatus.APPROVED,
+      parent_batch_id: null,
+    };
+
+    it('GET /:id conceals a cross-organisation batch as 404 (donor cannot read another org batch)', async () => {
+      // 1st call: batch lookup (belongs to another donor org)
+      // 2nd call: isBatchReadableByUser access check → denied
+      dbMock.queryOne.mockResolvedValueOnce(otherOrgBatch).mockResolvedValueOnce({ allowed: false });
+
+      await expect(service.getBatchById(otherOrgBatch.id, mockDonorUser)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('GET /:id allows a donor to read their own organisation batch', async () => {
+      const ownBatch = { ...otherOrgBatch, donor_organisation_id: mockDonorUser.organisationId };
+      dbMock.queryOne
+        .mockResolvedValueOnce(ownBatch)
+        .mockResolvedValueOnce({ allowed: true });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      const result = await service.getBatchById(ownBatch.id, mockDonorUser);
+
+      expect(result.id).toBe(ownBatch.id);
+      expect(result.childBatches).toEqual([]);
+      expect(result.inspections).toEqual([]);
+    });
+
+    it('GET /:id denies an inspector an APPROVED batch outside the inspection workflow', async () => {
+      const inspector: AuthUser = {
+        id: '66666666-6666-6666-6666-666666666666',
+        fullName: 'Insp. Eve',
+        role: AppRole.INSPECTOR,
+      };
+      dbMock.queryOne.mockResolvedValueOnce(otherOrgBatch).mockResolvedValueOnce({ allowed: false });
+
+      await expect(service.getBatchById(otherOrgBatch.id, inspector)).rejects.toThrow(NotFoundException);
+    });
+
+    it('GET /:id allows an inspector a pending_inspection batch via the workflow duty change', async () => {
+      const inspector: AuthUser = {
+        id: '66666666-6666-6666-6666-666666666666',
+        fullName: 'Insp. Eve',
+        role: AppRole.INSPECTOR,
+      };
+      const queuedBatch = { ...otherOrgBatch, status: FoodBatchStatus.PENDING_INSPECTION };
+      // No org membership → isBatchReadableByUser short-circuits INSPECTOR branch
+      dbMock.queryOne.mockResolvedValueOnce(queuedBatch);
+
+      const result = await service.getBatchById(queuedBatch.id, inspector);
+      expect(result.id).toBe(queuedBatch.id);
+    });
+
+    it('isBatchReadableByUser: volunteer with a delivery task relationship is allowed', async () => {
+      const volunteer: AuthUser = {
+        id: '77777777-7777-7777-7777-777777777777',
+        fullName: 'Vic Volunteer',
+        role: AppRole.VOLUNTEER,
+      };
+      dbMock.queryOne.mockResolvedValueOnce({ allowed: true });
+
+      const allowed = await service.isBatchReadableByUser(otherOrgBatch.id, { status: 'allocated' }, volunteer);
+
+      expect(allowed).toBe(true);
+      const sql = dbMock.queryOne.mock.calls[0][0] as string;
+      expect(sql).toContain('public.delivery_tasks dt');
+      expect(sql).toContain('dt.volunteer_id = $2');
+      expect(dbMock.queryOne.mock.calls[0][1]).toEqual([otherOrgBatch.id, volunteer.id]);
+    });
+
+    it('isBatchReadableByUser: org-less non-admin with no relationship is denied without a query', async () => {
+      const outsider: AuthUser = {
+        id: '88888888-8888-8888-8888-888888888888',
+        fullName: 'Org-less Intruder',
+        role: AppRole.DONOR,
+      };
+
+      const allowed = await service.isBatchReadableByUser(otherOrgBatch.id, { status: 'approved' }, outsider);
+
+      expect(allowed).toBe(false);
+      expect(dbMock.queryOne).not.toHaveBeenCalled();
+    });
+
+    it('GET /:id/history conceals another organisation batch history as 404', async () => {
+      dbMock.queryOne.mockResolvedValueOnce(otherOrgBatch).mockResolvedValueOnce({ allowed: false });
+
+      await expect(service.getBatchHistory(otherOrgBatch.id, mockDonorUser)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(safechainMock.getBatchEvents).not.toHaveBeenCalled();
+    });
+
+    it('GET /:id/history returns SafeChain events for a readable batch', async () => {
+      const ownBatch = { ...otherOrgBatch, donor_organisation_id: mockDonorUser.organisationId };
+      dbMock.queryOne
+        .mockResolvedValueOnce(ownBatch)
+        .mockResolvedValueOnce({ allowed: true });
+      safechainMock.getBatchEvents.mockResolvedValueOnce([{ id: 'event-1' }]);
+
+      const result = await service.getBatchHistory(ownBatch.id, mockDonorUser);
+
+      expect(result).toEqual([{ id: 'event-1' }]);
+      expect(safechainMock.getBatchEvents).toHaveBeenCalledWith(ownBatch.id);
+    });
+
+    it('GET /batches: org-less non-admin falls through to a deliberate 1 = 0 deny (never platform-wide)', async () => {
+      const orgLessDonor: AuthUser = {
+        id: '88888888-8888-8888-8888-888888888888',
+        fullName: 'Org-less Donor',
+        role: AppRole.DONOR,
+      };
+      const countParams: any[][] = [];
+      dbMock.queryOne = jest.fn().mockImplementation((_sql: string, params?: any[]) => {
+        countParams.push((params ?? []).slice());
+        return Promise.resolve({ total: 0 });
+      });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      const result = await service.listBatches({}, orgLessDonor);
+
+      expect(result.data).toEqual([]);
+      const countSql = dbMock.queryOne.mock.calls[0][0] as string;
+      expect(countSql).toContain('1 = 0');
+      // No organisation filter values beyond pagination were bound
+      expect(countParams[0]).toEqual([]);
+    });
+
+    it('GET /batches: explicit donorOrganisationId can NEVER override the donor organisation scope', async () => {
+      const maliciousQuery = { donorOrganisationId: '99999999-9999-9999-9999-999999999999' };
+      dbMock.queryOne = jest.fn().mockResolvedValue({ total: 0 });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      await service.listBatches(maliciousQuery, mockDonorUser);
+
+      const countSql = dbMock.queryOne.mock.calls[0][0] as string;
+      const params = dbMock.queryOne.mock.calls[0][1] as any[];
+      // Scope references the caller's OWN org (1st and 2nd bound values), not the spoofed one
+      expect(params[0]).toBe(mockDonorUser.organisationId);
+      expect(params[1]).toBe(mockDonorUser.organisationId);
+      expect(params).not.toContain(maliciousQuery.donorOrganisationId);
+      expect(countSql).toContain('donor_organisation_id = $1');
+      expect(countSql).toContain('food_allocations dfa');
+    });
+
+    it('GET /batches: inspector retains the pending/hold inspection queue even without an org', async () => {
+      const orgLessInspector: AuthUser = {
+        id: '66666666-6666-6666-6666-666666666666',
+        fullName: 'Insp. Queue',
+        role: AppRole.INSPECTOR,
+      };
+      dbMock.queryOne = jest.fn().mockResolvedValue({ total: 1 });
+      dbMock.query = jest.fn().mockResolvedValue([{ id: 'queued-batch' }]);
+
+      const result = await service.listBatches({}, orgLessInspector);
+
+      expect(result.data).toEqual([{ id: 'queued-batch' }]);
+      const countSql = dbMock.queryOne.mock.calls[0][0] as string;
+      expect(countSql).toContain('pending_inspection');
+      expect(countSql).toContain('hold');
+    });
+
+    it('GET /batches: admin may still filter by arbitrary donorOrganisationId (platform policy)', async () => {
+      const countParams: any[][] = [];
+      dbMock.queryOne = jest.fn().mockImplementation((_sql: string, params?: any[]) => {
+        countParams.push((params ?? []).slice());
+        return Promise.resolve({ total: 0 });
+      });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      await service.listBatches(
+        { donorOrganisationId: '99999999-9999-9999-9999-999999999999' },
+        mockAdminUser,
+      );
+
+      const countSql = dbMock.queryOne.mock.calls[0][0] as string;
+      expect(countSql).toContain('donor_organisation_id = $1');
+      expect(countParams[0]).toEqual(['99999999-9999-9999-9999-999999999999']);
+    });
+  });
+
+  describe('Batch summary (Phase 0, Task F — donor dashboard)', () => {
+    const summaryUser = mockDonorUser; // org 22222222-…
+
+    it('rejects an organisation-less user with 403 (no arbitrary org id is accepted)', async () => {
+      const orgLess: AuthUser = {
+        id: '88888888-8888-8888-8888-888888888888',
+        fullName: 'Org-less Donor',
+        role: AppRole.DONOR,
+      };
+
+      await expect(
+        service.getBatchSummary(orgLess),
+      ).rejects.toThrow(ForbiddenException);
+      expect(dbMock.queryOne).not.toHaveBeenCalled();
+    });
+
+    it('computes status counts and per-unit quantities from the database ledger without mixing units', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        total_batches: 5,
+        pending_inspection: 2,
+        on_hold: 1,
+        approved: 1,
+        partially_allocated: 1,
+        allocated: 0,
+        in_transit: 0,
+        completed: 0,
+        rejected: 0,
+        expired: 0,
+        cancelled: 0,
+      });
+      dbMock.query.mockResolvedValueOnce([
+        {
+          unit: 'kg',
+          original_quantity: 120,
+          reserved_quantity: 60,
+          available_quantity: 60,
+          delivered_quantity: 40,
+          lost_quantity: 5,
+        },
+        {
+          unit: 'portions',
+          original_quantity: 30,
+          reserved_quantity: 10,
+          available_quantity: 20,
+          delivered_quantity: 0,
+          lost_quantity: 0,
+        },
+      ]);
+
+      const result = await service.getBatchSummary(summaryUser);
+
+      expect(result.organisationId).toBe(summaryUser.organisationId);
+      expect(result.metrics.totalBatches).toBe(5);
+      expect(result.metrics.pendingInspection).toBe(2);
+      expect(result.metrics.onHold).toBe(1);
+      expect(result.metrics.approved).toBe(1);
+      expect(result.metrics.partiallyAllocated).toBe(1);
+      expect(result.metrics.completedBatches).toBe(0);
+
+      // kg and portions are kept as separate ledger groups — never summed
+      expect(result.metrics.quantities).toHaveLength(2);
+      const kg = result.metrics.quantities.find((q: any) => q.unit === 'kg');
+      expect(kg).toMatchObject({
+        originalQuantity: 120,
+        reservedQuantity: 60,
+        availableQuantity: 60,
+        deliveredQuantity: 40,
+        lostQuantity: 5,
+      });
+
+      // Scope + parent/child reconciliation enforced in SQL
+      const countSql = dbMock.queryOne.mock.calls[0][0] as string;
+      expect(countSql).toContain('donor_organisation_id = $1');
+      expect(countSql).toContain('parent_batch_id IS NULL');
+      const quantitySql = dbMock.query.mock.calls[0][0] as string;
+      expect(quantitySql).toContain('donor_organisation_id = $1');
+      expect(quantitySql).toContain('parent_batch_id IS NULL');
+      expect(quantitySql).toContain('GROUP BY b.quantity_unit');
+    });
+
+    it('returns a zeroed contract for an organisation with no batches', async () => {
+      dbMock.queryOne.mockResolvedValueOnce({
+        total_batches: 0,
+        pending_inspection: 0,
+        on_hold: 0,
+        approved: 0,
+        partially_allocated: 0,
+        allocated: 0,
+        in_transit: 0,
+        completed: 0,
+        rejected: 0,
+        expired: 0,
+        cancelled: 0,
+      });
+      dbMock.query.mockResolvedValueOnce([]);
+
+      const result = await service.getBatchSummary(summaryUser);
+
+      expect(result.metrics.totalBatches).toBe(0);
+      expect(result.metrics.pendingInspection).toBe(0);
+      expect(result.metrics.quantities).toEqual([]);
+    });
+
+    it('never leaks another organisation: the caller org id is bound as the ONLY filter parameter', async () => {
+      dbMock.queryOne = jest.fn().mockResolvedValue({
+        total_batches: 0,
+        pending_inspection: 0,
+        on_hold: 0,
+        approved: 0,
+        partially_allocated: 0,
+        allocated: 0,
+        in_transit: 0,
+        completed: 0,
+        rejected: 0,
+        expired: 0,
+        cancelled: 0,
+      });
+      dbMock.query = jest.fn().mockResolvedValue([]);
+
+      // The API accepts no org id argument at all — scope is server-derived
+      await service.getBatchSummary(mockOtherUser);
+
+      expect(dbMock.queryOne.mock.calls[0][1]).toEqual([mockOtherUser.organisationId]);
+      expect(dbMock.query.mock.calls[0][1]).toEqual([mockOtherUser.organisationId]);
     });
   });
 });

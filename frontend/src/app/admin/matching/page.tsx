@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Cpu, Sparkles, CheckCircle2, ArrowRight, ShieldCheck, MapPin } from "lucide-react";
+import { Cpu, Sparkles, CheckCircle2, ArrowRight, ShieldCheck, MapPin, AlertCircle } from "lucide-react";
 import AdminHeader from "@/components/admin/AdminHeader";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
 import StatusBadge from "@/components/shared/StatusBadge";
 import { storageService } from "@/services/storageService";
-import { performAutoMatch } from "@/services/smartMatchingService";
 import { Donation, RecipientRequest } from "@/types";
 
 export default function AdminMatchingPage() {
@@ -26,14 +25,10 @@ export default function AdminMatchingPage() {
   }, []);
 
   const handleTriggerMatch = (donationId: string, code: string) => {
-    const success = performAutoMatch(donationId);
-    if (success) {
-      setNotice(`Successfully matched and dispatched consignment ${code} to optimal shelter!`);
-    } else {
-      setNotice(`Consignment ${code} already matched or no pending demand within radius.`);
-    }
-    setTimeout(() => setNotice(null), 3500);
-    loadData();
+    setNotice(
+      `Consignment ${code}: Algorithmic dispatch is managed via backend PostGIS matching service (/api/v1/batches/${donationId}/matches) upon verified human inspection approval.`
+    );
+    setTimeout(() => setNotice(null), 5000);
   };
 
   return (

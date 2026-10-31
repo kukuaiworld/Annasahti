@@ -23,16 +23,19 @@ export class DeliveriesService {
   ) {}
 
   async assignVolunteer(taskId: string, dto: AssignVolunteerDto, user: AuthUser): Promise<any> {
-    const task = await this.db.queryOne(
-      `
-      SELECT dt.*, a.batch_id, a.recipient_organisation_id, b.donor_organisation_id
-      FROM public.delivery_tasks dt
-      JOIN public.food_allocations a ON a.id = dt.allocation_id
-      JOIN public.food_batches b ON b.id = a.batch_id
-      WHERE dt.id = $1;
-      `,
-      [taskId],
-    );
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT dt.*, a.batch_id, a.recipient_organisation_id, b.donor_organisation_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE dt.id = $1;
+          `,
+          [taskId],
+        )
+      ).rows[0];
 
     if (!task) {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
@@ -42,69 +45,95 @@ export class DeliveriesService {
       throw new BadRequestException(`Cannot assign volunteer to task in "${task.status}" status.`);
     }
 
-    // Verify volunteer profile
-    const volunteer = await this.db.queryOne(
-      `SELECT id, full_name, role FROM public.profiles WHERE id = $1;`,
-      [dto.volunteerId],
-    );
+    // Phase 0 (Task C): only platform admins or members of the recipient or
+    // donor organisation behind this allocation may assign delivery work.
+    if (
+      user.role !== AppRole.ADMIN &&
+      user.organisationId !== task.recipient_organisation_id &&
+      user.organisationId !== task.donor_organisation_id
+    ) {
+      throw new ForbiddenException(
+        'Only platform administrators or members of the delivery\u0027s donor or recipient organisation can assign volunteers.',
+      );
+    }
+
+    // Phase 0 (Task C): the caller-supplied volunteerId must resolve to a
+    // trusted volunteer profile in the database - a valid UUID alone is not
+    // sufficient, and profile role/account status is the only source of truth.
+    const volunteer = (
+      await client.query(
+        `SELECT id, full_name FROM public.profiles WHERE id = $1 AND role = 'volunteer'::public.app_role AND account_status = 'active';`,
+        [dto.volunteerId],
+      )
+    ).rows[0];
 
     if (!volunteer) {
       throw new NotFoundException(`Volunteer profile with ID "${dto.volunteerId}" was not found.`);
     }
 
-    const updatedTask = (await this.db.queryOne(
-      `
-      UPDATE public.delivery_tasks
-      SET 
-        volunteer_id = $1,
-        status = 'accepted'::public.delivery_status,
-        pickup_deadline = COALESCE($2, pickup_deadline),
-        delivery_deadline = COALESCE($3, delivery_deadline),
-        delivery_notes = COALESCE($4, delivery_notes),
-        accepted_at = now(),
-        updated_at = now()
-      WHERE id = $5
-      RETURNING *;
-      `,
-      [
-        dto.volunteerId,
-        dto.pickupDeadline ? new Date(dto.pickupDeadline) : null,
-        dto.deliveryDeadline ? new Date(dto.deliveryDeadline) : null,
-        dto.deliveryNotes || null,
-        taskId,
-      ],
-    ))!;
+    const updatedTask = (
+      await client.query(
+        `
+        UPDATE public.delivery_tasks
+        SET
+          volunteer_id = $1,
+          status = 'accepted'::public.delivery_status,
+          pickup_deadline = COALESCE($2, pickup_deadline),
+          delivery_deadline = COALESCE($3, delivery_deadline),
+          delivery_notes = COALESCE($4, delivery_notes),
+          accepted_at = now(),
+          updated_at = now()
+        WHERE id = $5
+        RETURNING *;
+        `,
+        [
+          dto.volunteerId,
+          dto.pickupDeadline ? new Date(dto.pickupDeadline) : null,
+          dto.deliveryDeadline ? new Date(dto.deliveryDeadline) : null,
+          dto.deliveryNotes || null,
+          taskId,
+        ],
+      )
+    ).rows[0];
 
-    await this.safechain.recordEvent({
-      batchId: task.batch_id,
-      allocationId: task.allocation_id,
-      deliveryId: taskId,
-      eventType: 'volunteer_assigned',
-      description: `Delivery assigned to volunteer ${volunteer.full_name} by ${user.fullName}`,
-      recordedBy: user.id,
-      eventData: {
-        deliveryTaskId: taskId,
-        volunteerId: dto.volunteerId,
-        volunteerName: volunteer.full_name,
+    await this.safechain.recordEvent(
+      {
+        batchId: task.batch_id,
+        allocationId: task.allocation_id,
+        deliveryId: taskId,
+        eventType: 'volunteer_assigned',
+        description: `Delivery assigned to volunteer ${volunteer.full_name} by ${user.fullName}`,
+        recordedBy: user.id,
+        eventData: {
+          deliveryTaskId: taskId,
+          volunteerId: dto.volunteerId,
+          volunteerName: volunteer.full_name,
+        },
       },
-    });
+      client,
+    );
 
     return {
       message: 'Volunteer successfully assigned to delivery.',
       deliveryTask: updatedTask,
     };
+    }, user.id);
   }
 
   async reassignVolunteer(taskId: string, dto: ReassignVolunteerDto, user: AuthUser): Promise<any> {
-    const task = await this.db.queryOne(
-      `
-      SELECT dt.*, a.batch_id
-      FROM public.delivery_tasks dt
-      JOIN public.food_allocations a ON a.id = dt.allocation_id
-      WHERE dt.id = $1;
-      `,
-      [taskId],
-    );
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT dt.*, a.batch_id, a.recipient_organisation_id, b.donor_organisation_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE dt.id = $1;
+          `,
+          [taskId],
+        )
+      ).rows[0];
 
     if (!task) {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
@@ -114,182 +143,241 @@ export class DeliveriesService {
       throw new BadRequestException(`Cannot reassign task in "${task.status}" status.`);
     }
 
+    // Phase 0 (Task C): same caller authorisation as assignment. The currently
+    // assigned volunteer cannot redirect a delivery to an arbitrary account.
+    if (
+      user.role !== AppRole.ADMIN &&
+      user.organisationId !== task.recipient_organisation_id &&
+      user.organisationId !== task.donor_organisation_id
+    ) {
+      throw new ForbiddenException(
+        'Only platform administrators or members of the delivery\u0027s donor or recipient organisation can reassign volunteers.',
+      );
+    }
+
     const previousVolunteerId = task.volunteer_id;
 
-    // Verify new volunteer profile
-    const newVolunteer = await this.db.queryOne(
-      `SELECT id, full_name FROM public.profiles WHERE id = $1;`,
-      [dto.newVolunteerId],
-    );
+    // Verify new volunteer profile: trusted volunteer role + active account
+    const newVolunteer = (
+      await client.query(
+        `SELECT id, full_name FROM public.profiles WHERE id = $1 AND role = 'volunteer'::public.app_role AND account_status = 'active';`,
+        [dto.newVolunteerId],
+      )
+    ).rows[0];
 
     if (!newVolunteer) {
       throw new NotFoundException(`New volunteer with ID "${dto.newVolunteerId}" was not found.`);
     }
 
-    const updatedTask = (await this.db.queryOne(
-      `
-      UPDATE public.delivery_tasks
-      SET 
-        volunteer_id = $1,
-        delivery_notes = COALESCE(delivery_notes || E'\n' || $2, $2),
-        updated_at = now()
-      WHERE id = $3
-      RETURNING *;
-      `,
-      [
-        dto.newVolunteerId,
-        `Reassigned: ${dto.reason}`,
-        taskId,
-      ],
-    ))!;
+    const updatedTask = (
+      await client.query(
+        `
+        UPDATE public.delivery_tasks
+        SET
+          volunteer_id = $1,
+          delivery_notes = COALESCE(delivery_notes || E'\n' || $2, $2),
+          updated_at = now()
+        WHERE id = $3
+        RETURNING *;
+        `,
+        [
+          dto.newVolunteerId,
+          `Reassigned: ${dto.reason}`,
+          taskId,
+        ],
+      )
+    ).rows[0];
 
-    await this.safechain.recordEvent({
-      batchId: task.batch_id,
-      allocationId: task.allocation_id,
-      deliveryId: taskId,
-      eventType: 'volunteer_reassigned',
-      description: `Delivery reassigned to volunteer ${newVolunteer.full_name}. Reason: ${dto.reason}`,
-      recordedBy: user.id,
-      eventData: {
-        deliveryTaskId: taskId,
-        previousVolunteerId,
-        newVolunteerId: dto.newVolunteerId,
-        reason: dto.reason,
+    await this.safechain.recordEvent(
+      {
+        batchId: task.batch_id,
+        allocationId: task.allocation_id,
+        deliveryId: taskId,
+        eventType: 'volunteer_reassigned',
+        description: `Delivery reassigned to volunteer ${newVolunteer.full_name}. Reason: ${dto.reason}`,
+        recordedBy: user.id,
+        eventData: {
+          deliveryTaskId: taskId,
+          previousVolunteerId,
+          newVolunteerId: dto.newVolunteerId,
+          reason: dto.reason,
+        },
       },
-    });
+      client,
+    );
 
     return {
       message: 'Volunteer reassigned successfully.',
       deliveryTask: updatedTask,
     };
+    }, user.id);
   }
 
   async cancelDelivery(taskId: string, dto: CancelDeliveryDto, user: AuthUser): Promise<any> {
-    const task = await this.db.queryOne(
-      `
-      SELECT dt.*, a.batch_id
-      FROM public.delivery_tasks dt
-      JOIN public.food_allocations a ON a.id = dt.allocation_id
-      WHERE dt.id = $1;
-      `,
-      [taskId],
-    );
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT dt.*, a.batch_id, a.recipient_organisation_id, b.donor_organisation_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE dt.id = $1;
+          `,
+          [taskId],
+        )
+      ).rows[0];
 
-    if (!task) {
-      throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
-    }
+      if (!task) {
+        throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
+      }
 
-    if (task.status === 'delivered') {
-      throw new BadRequestException('Cannot cancel a delivery that has already been confirmed as delivered.');
-    }
+      // Phase 0 (Task C): only admins or donor/recipient organisation members
+      // may cancel. Assigned volunteers and unrelated users are denied.
+      if (
+        user.role !== AppRole.ADMIN &&
+        user.organisationId !== task.recipient_organisation_id &&
+        user.organisationId !== task.donor_organisation_id
+      ) {
+        throw new ForbiddenException(
+          'Only platform administrators or members of the delivery\u0027s donor or recipient organisation can cancel a delivery.',
+        );
+      }
 
-    const updatedTask = (await this.db.queryOne(
-      `
-      UPDATE public.delivery_tasks
-      SET 
-        status = 'cancelled'::public.delivery_status,
-        delivery_notes = COALESCE(delivery_notes || E'\n' || $1, $1),
-        updated_at = now()
-      WHERE id = $2
-      RETURNING *;
-      `,
-      [`Cancelled: ${dto.reason}`, taskId],
-    ))!;
+      if (task.status === 'delivered') {
+        throw new BadRequestException('Cannot cancel a delivery that has already been confirmed as delivered.');
+      }
 
-    await this.safechain.recordEvent({
-      batchId: task.batch_id,
-      allocationId: task.allocation_id,
-      deliveryId: taskId,
-      eventType: 'delivery_cancelled',
-      description: `Delivery cancelled by ${user.fullName}. Reason: ${dto.reason}`,
-      recordedBy: user.id,
-      eventData: {
-        deliveryTaskId: taskId,
-        reason: dto.reason,
-      },
-    });
+      const updatedTask = (
+        await client.query(
+          `
+          UPDATE public.delivery_tasks
+          SET
+            status = 'cancelled'::public.delivery_status,
+            delivery_notes = COALESCE(delivery_notes || E'\n' || $1, $1),
+            updated_at = now()
+          WHERE id = $2
+          RETURNING *;
+          `,
+          [`Cancelled: ${dto.reason}`, taskId],
+        )
+      ).rows[0];
 
-    return {
-      message: 'Delivery cancelled successfully.',
-      deliveryTask: updatedTask,
-    };
+      await this.safechain.recordEvent(
+        {
+          batchId: task.batch_id,
+          allocationId: task.allocation_id,
+          deliveryId: taskId,
+          eventType: 'delivery_cancelled',
+          description: `Delivery cancelled by ${user.fullName}. Reason: ${dto.reason}`,
+          recordedBy: user.id,
+          eventData: {
+            deliveryTaskId: taskId,
+            reason: dto.reason,
+          },
+        },
+        client,
+      );
+
+      return {
+        message: 'Delivery cancelled successfully.',
+        deliveryTask: updatedTask,
+      };
+    }, user.id);
   }
 
   async recordPickup(taskId: string, dto: PickupDeliveryDto, user: AuthUser): Promise<any> {
-    const task = await this.db.queryOne(
-      `
-      SELECT dt.*, a.batch_id
-      FROM public.delivery_tasks dt
-      JOIN public.food_allocations a ON a.id = dt.allocation_id
-      WHERE dt.id = $1;
-      `,
-      [taskId],
-    );
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT dt.*, a.batch_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          WHERE dt.id = $1;
+          `,
+          [taskId],
+        )
+      ).rows[0];
 
-    if (!task) {
-      throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
-    }
+      if (!task) {
+        throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
+      }
 
-    // Permission check: Assigned volunteer or admin
-    if (user.role !== AppRole.ADMIN && user.id !== task.volunteer_id) {
-      throw new ForbiddenException('Only the assigned volunteer can record pickup for this delivery.');
-    }
+      // Permission check: Assigned volunteer or admin
+      if (user.role !== AppRole.ADMIN && user.id !== task.volunteer_id) {
+        throw new ForbiddenException('Only the assigned volunteer can record pickup for this delivery.');
+      }
 
-    if (['delivered', 'discrepancy_reported', 'cancelled', 'failed'].includes(task.status)) {
-      throw new BadRequestException(`Cannot record pickup for delivery in "${task.status}" status.`);
-    }
+      if (['delivered', 'discrepancy_reported', 'cancelled', 'failed'].includes(task.status)) {
+        throw new BadRequestException(`Cannot record pickup for delivery in "${task.status}" status.`);
+      }
 
-    const updatedTask = (await this.db.queryOne(
-      `
-      UPDATE public.delivery_tasks
-      SET 
-        status = 'in_transit'::public.delivery_status,
-        pickup_confirmed_at = now(),
-        departed_at = now(),
-        delivery_notes = COALESCE(delivery_notes || E'\n' || $1, delivery_notes),
-        updated_at = now()
-      WHERE id = $2
-      RETURNING *;
-      `,
-      [dto.pickupNotes ? `Pickup note: ${dto.pickupNotes}` : null, taskId],
-    ))!;
+      const updatedTask = (
+        await client.query(
+          `
+          UPDATE public.delivery_tasks
+          SET
+            status = 'in_transit'::public.delivery_status,
+            pickup_confirmed_at = now(),
+            departed_at = now(),
+            delivery_notes = COALESCE(delivery_notes || E'\n' || $1, delivery_notes),
+            updated_at = now()
+          WHERE id = $2
+          RETURNING *;
+          `,
+          [dto.pickupNotes ? `Pickup note: ${dto.pickupNotes}` : null, taskId],
+        )
+      ).rows[0];
 
-    await this.safechain.recordEvent({
-      batchId: task.batch_id,
-      allocationId: task.allocation_id,
-      deliveryId: taskId,
-      eventType: 'pickup_confirmed',
-      description: `Volunteer ${user.fullName} confirmed pickup. Batch is now in transit.`,
-      recordedBy: user.id,
-      eventData: {
-        deliveryTaskId: taskId,
-        pickupNotes: dto.pickupNotes || null,
-      },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: task.batch_id,
+          allocationId: task.allocation_id,
+          deliveryId: taskId,
+          eventType: 'pickup_confirmed',
+          description: `Volunteer ${user.fullName} confirmed pickup. Batch is now in transit.`,
+          recordedBy: user.id,
+          eventData: {
+            deliveryTaskId: taskId,
+            pickupNotes: dto.pickupNotes || null,
+          },
+        },
+        client,
+      );
 
-    return {
-      message: 'Pickup milestone recorded. Delivery is now in transit.',
-      deliveryTask: updatedTask,
-    };
+      return {
+        message: 'Pickup milestone recorded. Delivery is now in transit.',
+        deliveryTask: updatedTask,
+      };
+    }, user.id);
   }
 
   async completeDelivery(taskId: string, dto: CompleteDeliveryDto, user: AuthUser): Promise<any> {
-    const task = await this.db.queryOne(
-      `
-      SELECT 
-        dt.*,
-        a.batch_id,
-        a.allocated_quantity,
-        a.quantity_unit,
-        a.recipient_organisation_id,
-        b.donor_organisation_id
-      FROM public.delivery_tasks dt
-      JOIN public.food_allocations a ON a.id = dt.allocation_id
-      JOIN public.food_batches b ON b.id = a.batch_id
-      WHERE dt.id = $1;
-      `,
-      [taskId],
-    );
+    // BUG-10 fix: the delivery confirmation and the SafeChain audit event are
+    // recorded atomically - a SafeChain failure can no longer leave a confirmed
+    // delivery without traceability. The transaction carries app.user_id so
+    // mark_task_delivered() and the status-change triggers attribute events
+    // to the acting user.
+    return this.db.transaction(async (client) => {
+      const task = (
+        await client.query(
+          `
+          SELECT
+            dt.*,
+            a.batch_id,
+            a.allocated_quantity,
+            a.quantity_unit,
+            a.recipient_organisation_id,
+            b.donor_organisation_id
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations a ON a.id = dt.allocation_id
+          JOIN public.food_batches b ON b.id = a.batch_id
+          WHERE dt.id = $1;
+          `,
+          [taskId],
+        )
+      ).rows[0];
 
     if (!task) {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
@@ -297,6 +385,17 @@ export class DeliveriesService {
 
     if (['delivered', 'discrepancy_reported'].includes(task.status)) {
       throw new BadRequestException('This delivery has already been confirmed.');
+    }
+
+    // Phase 0 (Task C): only platform admins or members of the allocation's
+    // recipient organisation can confirm receipt. Donors from other
+    // organisations and unrelated volunteers can never fabricate a recipient
+    // confirmation, which is what FoodLoop impact metrics are built from.
+    // The authenticated user is always recorded as the confirmer.
+    if (user.role !== AppRole.ADMIN && user.organisationId !== task.recipient_organisation_id) {
+      throw new ForbiddenException(
+        'Only platform administrators or members of the recipient organisation can confirm delivery receipt.',
+      );
     }
 
     if (dto.quantityUnit !== task.quantity_unit) {
@@ -341,7 +440,7 @@ export class DeliveriesService {
       dto.canBeDivertedToWaste ?? false,
     ];
 
-    const confirmation = await this.db.queryOne(confirmationSql, confirmationValues);
+    const confirmation = (await client.query(confirmationSql, confirmationValues)).rows[0];
 
     const hasDiscrepancy = (dto.damagedQuantity ?? 0) > 0 || (dto.missingQuantity ?? 0) > 0;
 
@@ -361,13 +460,14 @@ export class DeliveriesService {
         missingQuantity: dto.missingQuantity,
         evidenceCount: (dto.evidenceUrls || []).length,
       },
-    });
+    }, client);
 
     return {
       message: 'Delivery milestone successfully recorded and verified.',
       confirmation,
       hasDiscrepancy,
     };
+    }, user.id);
   }
 
   async getDeliveryById(taskId: string, user: AuthUser): Promise<any> {
@@ -385,6 +485,8 @@ export class DeliveriesService {
         donor.address as donor_address,
         ro.name as recipient_name,
         ro.address as recipient_address,
+        b.donor_organisation_id,
+        a.recipient_organisation_id,
         p.full_name as volunteer_name,
         p.phone as volunteer_phone,
         dc.id as confirmation_id,
@@ -410,7 +512,37 @@ export class DeliveriesService {
       throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
     }
 
-    return delivery;
+    // Phase 0 (Task E): least-privilege detail read.
+    // Allowed: ADMIN, donor/recipient organisation members of this task,
+    // the assigned volunteer, and (for the legitimate claim workflow) any
+    // volunteer viewing an unassigned task. Everyone else: concealed 404.
+    const isOrgMember =
+      user.role !== AppRole.ADMIN &&
+      (user.organisationId === delivery.donor_organisation_id ||
+        user.organisationId === delivery.recipient_organisation_id);
+
+    const isAssignedVolunteer = user.role === AppRole.VOLUNTEER && delivery.volunteer_id === user.id;
+    const isClaimableVolunteer = user.role === AppRole.VOLUNTEER && delivery.volunteer_id === null;
+
+    if (
+      user.role !== AppRole.ADMIN &&
+      !isOrgMember &&
+      !isAssignedVolunteer &&
+      !isClaimableVolunteer
+    ) {
+      throw new NotFoundException(`Delivery task with ID "${taskId}" was not found.`);
+    }
+
+    if (user.role === AppRole.ADMIN) {
+      return delivery;
+    }
+
+    return {
+      ...delivery,
+      // Least privilege: the volunteer's personal phone number is only exposed
+      // to platform admins and organisation members - never to other roles.
+      volunteer_phone: isOrgMember ? delivery.volunteer_phone : null,
+    };
   }
 
   async listDeliveries(query: DeliveryQueryDto, user: AuthUser): Promise<any> {
@@ -422,19 +554,34 @@ export class DeliveriesService {
     const values: any[] = [];
     let pIdx = 1;
 
-    // Tenant isolation
+    // Phase 0 (Task D): strict per-role scoping with default deny.
+    // ADMIN: platform-wide. Volunteers: their assigned tasks plus legitimately
+    // available unassigned tasks (the claim workflow). Org members: records
+    // touching their active organisation. Everything else: denied.
     if (user.role !== AppRole.ADMIN) {
+      const scopeClauses: string[] = [];
+
       if (user.role === AppRole.VOLUNTEER) {
-        whereClauses.push(`(dt.volunteer_id = $${pIdx} OR dt.volunteer_id IS NULL)`);
+        scopeClauses.push(`(dt.volunteer_id = $${pIdx} OR dt.volunteer_id IS NULL)`);
         values.push(user.id);
         pIdx++;
-      } else if (user.organisationId) {
-        whereClauses.push(
+      }
+
+      if (user.organisationId) {
+        scopeClauses.push(
           `(a.recipient_organisation_id = $${pIdx} OR b.donor_organisation_id = $${pIdx})`,
         );
         values.push(user.organisationId);
         pIdx++;
       }
+
+      if (scopeClauses.length === 0) {
+        throw new ForbiddenException(
+          'You have no active organisation membership or delivery relationship, so delivery lists are not available to you.',
+        );
+      }
+
+      whereClauses.push(`(${scopeClauses.join(' OR ')})`);
     }
 
     if (query.status) {

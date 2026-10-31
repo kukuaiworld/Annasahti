@@ -15,8 +15,11 @@ import {
   Zap,
 } from "lucide-react";
 
+import { useAuth } from "@/providers/auth-provider";
+
 export default function VolunteerSidebar() {
   const pathname = usePathname();
+  const { profile, signOut } = useAuth();
 
   const navItems = [
     { label: "Mission Dashboard", href: "/volunteer/dashboard", icon: LayoutDashboard },
@@ -37,7 +40,7 @@ export default function VolunteerSidebar() {
           </div>
           <div>
             <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white text-base">AnnaSathi</span>
+              <span className="font-bold text-white text-base">FoodLoop</span>
               <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.2 rounded font-semibold uppercase">
                 Courier
               </span>
@@ -75,28 +78,36 @@ export default function VolunteerSidebar() {
       {/* Volunteer Profile Strip */}
       <div className="p-4 border-t border-slate-800 space-y-3">
         <div className="bg-slate-800/60 p-3 rounded-xl flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center font-bold text-xs">
-            AS
+          <div className="w-8 h-8 rounded-full bg-blue-700 text-white flex items-center justify-center font-bold text-xs uppercase">
+            {profile?.fullName?.substring(0, 2) || "VO"}
           </div>
           <div className="overflow-hidden">
-            <p className="text-xs font-bold text-white truncate">Aarav Sharma (Rank #1)</p>
-            <p className="text-[10px] text-blue-400 flex items-center gap-1">
-              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span>4,850 Karma Points</span>
+            <p className="text-xs font-bold text-white truncate">
+              {profile?.fullName || "Courier Volunteer"}
+            </p>
+            <p className="text-[10px] text-blue-400 truncate">
+              Role: {profile?.role || "volunteer"}
             </p>
           </div>
         </div>
 
-        <Link
-          href="/"
-          className="flex items-center justify-between text-xs text-slate-400 hover:text-white px-2 py-1 rounded transition"
-        >
-          <span className="flex items-center gap-1.5">
+        <div className="flex items-center justify-between text-xs px-1">
+          <Link
+            href="/"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white transition"
+          >
             <ExternalLink className="w-3.5 h-3.5" />
-            <span>Public Website</span>
-          </span>
-          <LogOut className="w-3.5 h-3.5 text-slate-500" />
-        </Link>
+            <span>Public Site</span>
+          </Link>
+          <button
+            onClick={() => signOut()}
+            className="flex items-center gap-1 text-slate-400 hover:text-red-400 transition"
+            title="Sign Out"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign Out</span>
+          </button>
+        </div>
       </div>
     </aside>
   );

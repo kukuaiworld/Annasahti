@@ -13,7 +13,6 @@ import { AuthGuard } from '../common/guards/auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthUser } from '../common/interfaces/auth-user.interface';
 import { FoodBatchesService } from './food-batches.service';
-import { SafeChainService } from '../safechain/safechain.service';
 import { CreateFoodBatchDto } from './dto/create-food-batch.dto';
 import { UpdateFoodBatchDto } from './dto/update-food-batch.dto';
 import { BatchQueryDto } from './dto/batch-query.dto';
@@ -22,10 +21,7 @@ import { SplitBatchDto } from './dto/split-batch.dto';
 @Controller('batches')
 @UseGuards(AuthGuard)
 export class FoodBatchesController {
-  constructor(
-    private readonly batchesService: FoodBatchesService,
-    private readonly safechainService: SafeChainService,
-  ) {}
+  constructor(private readonly batchesService: FoodBatchesService) {}
 
   @Post()
   async createBatch(
@@ -41,6 +37,15 @@ export class FoodBatchesController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.batchesService.listBatches(query, user);
+  }
+
+  /**
+   * Phase 0 (Task F): donor dashboard summary.
+   * Declared before ':id' routes so 'summary' is not captured as a UUID param.
+   */
+  @Get('summary')
+  async getBatchSummary(@CurrentUser() user: AuthUser) {
+    return this.batchesService.getBatchSummary(user);
   }
 
   @Get(':id')
@@ -79,7 +84,10 @@ export class FoodBatchesController {
   }
 
   @Get(':id/history')
-  async getBatchHistory(@Param('id', ParseUUIDPipe) id: string) {
-    return this.safechainService.getBatchEvents(id);
+  async getBatchHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.batchesService.getBatchHistory(id, user);
   }
 }

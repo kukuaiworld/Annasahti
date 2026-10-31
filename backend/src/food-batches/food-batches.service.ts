@@ -53,6 +53,79 @@ export class FoodBatchesService {
     return `FL-${randomHex}`;
   }
 
+  /**
+   * Phase 0 (Task B): server-side batch read-access policy.
+   *
+   * - ADMIN: platform-wide access (existing platform policy).
+   * - INSPECTOR: batches in `pending_inspection`/`hold`, which is exactly the
+   *   inspection workflow duty (queue is limited to those statuses).
+   * - Members of an active organisation: batches of their donor organisation
+   *   OR batches their organisation receives through an allocation.
+   * - Volunteers: batches with a delivery task assigned to them.
+   * - Everyone else (org-less non-inspectors): denied (concealed 404).
+   *
+   * The role/organisation used here come from the verified request context
+   * (trusted database profile + active membership), never from client input.
+   *
+   * Public so the inspections module can reuse the same policy for
+   * GET /inspections/batch/:batchId (Phase 0, Task E).
+   */
+  async isBatchReadableByUser(batchId: string, batch: { status: string }, user: AuthUser): Promise<boolean> {
+    if (user.role === AppRole.ADMIN) {
+      return true;
+    }
+
+    if (user.role === AppRole.INSPECTOR && ['pending_inspection', 'hold'].includes(batch.status)) {
+      return true;
+    }
+
+    const params: any[] = [batchId];
+    let paramIdx = 2;
+
+    const clauses: string[] = [];
+
+    if (user.organisationId) {
+      // Org relationship: own donor batches + received-allocation batches
+      clauses.push(`b.donor_organisation_id = $${paramIdx}`);
+      params.push(user.organisationId);
+      paramIdx++;
+      clauses.push(
+        `EXISTS (SELECT 1 FROM public.food_allocations fa WHERE fa.batch_id = b.id AND fa.recipient_organisation_id = $${paramIdx})`,
+      );
+      params.push(user.organisationId);
+      paramIdx++;
+    }
+
+    if (user.role === AppRole.VOLUNTEER) {
+      // Delivery relationship: a delivery task assigned to this volunteer
+      clauses.push(
+        `EXISTS (
+          SELECT 1
+          FROM public.delivery_tasks dt
+          JOIN public.food_allocations fav ON fav.id = dt.allocation_id
+          WHERE fav.batch_id = b.id AND dt.volunteer_id = $${paramIdx}
+        )`,
+      );
+      params.push(user.id);
+      paramIdx++;
+    }
+
+    if (clauses.length === 0) {
+      return false;
+    }
+
+    const result = await this.db.queryOne<{ allowed: boolean }>(
+      `
+      SELECT (${clauses.join(' OR ')}) AS allowed
+      FROM public.food_batches b
+      WHERE b.id = $1;
+      `,
+      params,
+    );
+
+    return Boolean(result?.allowed);
+  }
+
   async createBatch(dto: CreateFoodBatchDto, user: AuthUser): Promise<FoodBatchRecord> {
     // Authorization: User must be member of donor organisation or platform admin
     if (user.role !== AppRole.ADMIN && user.organisationId !== dto.donorOrganisationId) {
@@ -101,23 +174,30 @@ export class FoodBatchesService {
       user.id,
     ];
 
-    const batch = (await this.db.queryOne<FoodBatchRecord>(sql, values))!;
+    // Atomic insert + audit event so a SafeChain failure cannot leave a batch
+    // without traceability, and audit triggers observe the acting user.
+    return this.db.transaction(async (client) => {
+      const batch = (await client.query(sql, values)).rows[0] as FoodBatchRecord;
 
-    // Record SafeChain audit event
-    await this.safechain.recordEvent({
-      batchId: batch.id,
-      eventType: 'batch_created',
-      description: `Donation batch created by ${user.fullName}: ${batch.food_name} (${batch.quantity} ${batch.quantity_unit})`,
-      recordedBy: user.id,
-      eventData: {
-        batchCode: batch.batch_code,
-        donorOrganisationId: batch.donor_organisation_id,
-        quantity: batch.quantity,
-        quantityUnit: batch.quantity_unit,
-      },
-    });
+      // Record SafeChain audit event
+      await this.safechain.recordEvent(
+        {
+          batchId: batch.id,
+          eventType: 'batch_created',
+          description: `Donation batch created by ${user.fullName}: ${batch.food_name} (${batch.quantity} ${batch.quantity_unit})`,
+          recordedBy: user.id,
+          eventData: {
+            batchCode: batch.batch_code,
+            donorOrganisationId: batch.donor_organisation_id,
+            quantity: batch.quantity,
+            quantityUnit: batch.quantity_unit,
+          },
+        },
+        client,
+      );
 
-    return batch;
+      return batch;
+    }, user.id);
   }
 
   async getBatchById(id: string, user: AuthUser): Promise<any> {
@@ -132,6 +212,12 @@ export class FoodBatchesService {
     );
 
     if (!batch) {
+      throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
+    }
+
+    // Phase 0 (Task B): cross-tenant reads are concealed with 404 so the
+    // existence of another organisation's batch is not revealed.
+    if (!(await this.isBatchReadableByUser(id, { status: String(batch.status) }, user))) {
       throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
     }
 
@@ -179,6 +265,53 @@ export class FoodBatchesService {
     const values: any[] = [];
     let paramIndex = 1;
 
+    // Phase 0 (Task B): server-side tenant scoping. An explicit
+    // donorOrganisationId filter can never override ownership.
+    if (query.donorOrganisationId && user.role === AppRole.ADMIN) {
+      whereClauses.push(`b.donor_organisation_id = $${paramIndex++}`);
+      values.push(query.donorOrganisationId);
+    } else if (user.role !== AppRole.ADMIN) {
+      const scopeClauses: string[] = [];
+
+      if (user.organisationId) {
+        // Own donor organisation + batches the org receives through an allocation
+        scopeClauses.push(`b.donor_organisation_id = $${paramIndex}`);
+        values.push(user.organisationId);
+        paramIndex++;
+        scopeClauses.push(
+          `EXISTS (SELECT 1 FROM public.food_allocations dfa WHERE dfa.batch_id = b.id AND dfa.recipient_organisation_id = $${paramIndex})`,
+        );
+        values.push(user.organisationId);
+        paramIndex++;
+      }
+
+      if (user.role === AppRole.INSPECTOR) {
+        // Inspection workflow duty: the queue covers pending/hold batches only.
+        scopeClauses.push(`b.status IN ('pending_inspection'::public.food_batch_status, 'hold'::public.food_batch_status)`);
+      }
+
+      if (user.role === AppRole.VOLUNTEER) {
+        scopeClauses.push(
+          `EXISTS (
+            SELECT 1
+            FROM public.delivery_tasks dv
+            JOIN public.food_allocations dva ON dva.id = dv.allocation_id
+            WHERE dva.batch_id = b.id AND dv.volunteer_id = $${paramIndex}
+          )`,
+        );
+        values.push(user.id);
+        paramIndex++;
+      }
+
+      if (scopeClauses.length === 0) {
+        // Org-less non-admin, non-inspector, non-volunteer: deliberate
+        // default-deny instead of platform-wide data.
+        whereClauses.push('1 = 0');
+      } else {
+        whereClauses.push(`(${scopeClauses.join(' OR ')})`);
+      }
+    }
+
     if (query.status) {
       whereClauses.push(`b.status = $${paramIndex++}`);
       values.push(query.status);
@@ -187,11 +320,6 @@ export class FoodBatchesService {
     if (query.category) {
       whereClauses.push(`b.category = $${paramIndex++}`);
       values.push(query.category);
-    }
-
-    if (query.donorOrganisationId) {
-      whereClauses.push(`b.donor_organisation_id = $${paramIndex++}`);
-      values.push(query.donorOrganisationId);
     }
 
     if (query.expiryAfter) {
@@ -237,6 +365,129 @@ export class FoodBatchesService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Phase 0 (Task F): GET /api/v1/batches/summary
+   *
+   * Donor-owned dashboard metrics, scoped strictly to the caller's own active
+   * organisation (the caller cannot pass an arbitrary organisation id).
+   *
+   * Metric definitions (documented, no invented numbers):
+   * - Batches are counted at top level only (parent_batch_id IS NULL) so parent
+   *   and child quantities are never double counted. Child reservations are
+   *   already included in the parent's allocated_quantity by the database
+   *   quantity ledger (recalculate_batch_allocation_totals).
+   * - originalQuantity  = SUM(quantity) over top-level batches — the amount the
+   *   donor registered (child batches are derived, not additional registrations).
+   * - reservedQuantity  = SUM(allocated_quantity) over top-level batches —
+   *   active allocations plus non-cancelled child-batch reservations.
+   * - availableQuantity = generated column SUM(available_quantity) over
+   *   top-level batches = GREATEST(0, quantity - allocated - damaged - missing).
+   * - lostQuantity      = SUM(damaged_quantity + missing_quantity) across all
+   *   org batch rows (the delivery ledger records loss on the exact row the
+   *   allocation targets, which may be a child batch).
+   * - deliveredQuantity = SUM(delivered_quantity) across all org batch rows —
+   *   recipient-confirmed received quantities maintained by the
+   *   delivery-confirmation ledger (never claimed status counts).
+   * - Quantities are broken down by unit; kg and portions are NEVER summed
+   *   together.
+   * Status counts use the database's own status enum values; `allocated`
+   * combines 'allocated' and 'partially_allocated' as "has live reservations".
+   */
+  async getBatchSummary(user: AuthUser): Promise<any> {
+    if (!user.organisationId) {
+      throw new ForbiddenException(
+        'Batch summary is scoped to your own organisation, but your account has no active organisation membership.',
+      );
+    }
+
+    const organisationId = user.organisationId;
+
+    const countRow = await this.db.queryOne<any>(
+      `
+      SELECT
+        count(*)::int AS total_batches,
+        count(*) FILTER (WHERE status = 'pending_inspection')::int AS pending_inspection,
+        count(*) FILTER (WHERE status = 'hold')::int AS on_hold,
+        count(*) FILTER (WHERE status = 'approved')::int AS approved,
+        count(*) FILTER (WHERE status = 'partially_allocated')::int AS partially_allocated,
+        count(*) FILTER (WHERE status = 'allocated')::int AS allocated,
+        count(*) FILTER (WHERE status = 'in_transit')::int AS in_transit,
+        count(*) FILTER (WHERE status = 'completed')::int AS completed,
+        count(*) FILTER (WHERE status = 'rejected')::int AS rejected,
+        count(*) FILTER (WHERE status = 'expired')::int AS expired,
+        count(*) FILTER (WHERE status = 'cancelled')::int AS cancelled
+      FROM public.food_batches
+      WHERE donor_organisation_id = $1
+        AND parent_batch_id IS NULL;
+      `,
+      [organisationId],
+    );
+
+    const quantityRows = await this.db.query<any>(
+      `
+      SELECT
+        b.quantity_unit AS unit,
+        COALESCE(SUM(b.quantity) FILTER (WHERE b.parent_batch_id IS NULL), 0)::float8 AS original_quantity,
+        COALESCE(SUM(b.allocated_quantity) FILTER (WHERE b.parent_batch_id IS NULL), 0)::float8 AS reserved_quantity,
+        COALESCE(SUM(b.available_quantity) FILTER (WHERE b.parent_batch_id IS NULL), 0)::float8 AS available_quantity,
+        COALESCE(SUM(b.delivered_quantity), 0)::float8 AS delivered_quantity,
+        COALESCE(SUM(b.damaged_quantity + b.missing_quantity), 0)::float8 AS lost_quantity
+      FROM public.food_batches b
+      WHERE b.donor_organisation_id = $1
+      GROUP BY b.quantity_unit
+      ORDER BY b.quantity_unit ASC;
+      `,
+      [organisationId],
+    );
+
+    return {
+      organisationId,
+      metrics: {
+        totalBatches: countRow ? Number(countRow.total_batches) : 0,
+        pendingInspection: countRow ? Number(countRow.pending_inspection) : 0,
+        onHold: countRow ? Number(countRow.on_hold) : 0,
+        approved: countRow ? Number(countRow.approved) : 0,
+        partiallyAllocated: countRow ? Number(countRow.partially_allocated) : 0,
+        allocated: countRow ? Number(countRow.allocated) : 0,
+        inTransit: countRow ? Number(countRow.in_transit) : 0,
+        completedBatches: countRow ? Number(countRow.completed) : 0,
+        rejected: countRow ? Number(countRow.rejected) : 0,
+        expired: countRow ? Number(countRow.expired) : 0,
+        cancelled: countRow ? Number(countRow.cancelled) : 0,
+        // Per-unit quantity accounting; units are never mixed.
+        quantities: quantityRows.map((row) => ({
+          unit: row.unit,
+          originalQuantity: Number(row.original_quantity),
+          reservedQuantity: Number(row.reserved_quantity),
+          availableQuantity: Number(row.available_quantity),
+          lostQuantity: Number(row.lost_quantity),
+          deliveredQuantity: Number(row.delivered_quantity),
+        })),
+      },
+    };
+  }
+
+  /**
+   * Phase 0 (Task B): SafeChain history is tenant-protected — the caller must
+   * be able to read the batch itself before reading its audit trail.
+   */
+  async getBatchHistory(id: string, user: AuthUser): Promise<any> {
+    const batch = await this.db.queryOne<FoodBatchRecord>(
+      `SELECT id, status, donor_organisation_id FROM public.food_batches WHERE id = $1;`,
+      [id],
+    );
+
+    if (!batch) {
+      throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
+    }
+
+    if (!(await this.isBatchReadableByUser(id, { status: String(batch.status) }, user))) {
+      throw new NotFoundException(`Food batch with ID "${id}" was not found.`);
+    }
+
+    return this.safechain.getBatchEvents(id);
   }
 
   async updateBatch(id: string, dto: UpdateFoodBatchDto, user: AuthUser): Promise<FoodBatchRecord> {
@@ -301,17 +552,22 @@ export class FoodBatchesService {
       RETURNING *;
     `;
 
-    const updatedBatch = (await this.db.queryOne<FoodBatchRecord>(updateSql, values))!;
+    return this.db.transaction(async (client) => {
+      const updatedBatch = (await client.query(updateSql, values)).rows[0] as FoodBatchRecord;
 
-    await this.safechain.recordEvent({
-      batchId: id,
-      eventType: 'batch_updated',
-      description: `Food batch updated by ${user.fullName}`,
-      recordedBy: user.id,
-      eventData: { updatedFields: Object.keys(dto) },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: id,
+          eventType: 'batch_updated',
+          description: `Food batch updated by ${user.fullName}`,
+          recordedBy: user.id,
+          eventData: { updatedFields: Object.keys(dto) },
+        },
+        client,
+      );
 
-    return updatedBatch;
+      return updatedBatch;
+    }, user.id);
   }
 
   async cancelBatch(id: string, reason: string, user: AuthUser): Promise<FoodBatchRecord> {
@@ -332,25 +588,30 @@ export class FoodBatchesService {
       throw new BadRequestException(`Cannot cancel a batch that is in transit or completed.`);
     }
 
-    const updated = (await this.db.queryOne<FoodBatchRecord>(
-      `
-      UPDATE public.food_batches
-      SET status = 'cancelled'::public.food_batch_status, updated_at = now()
-      WHERE id = $1
-      RETURNING *;
-      `,
-      [id],
-    ))!;
+    return this.db.transaction(async (client) => {
+      const updated = (await client.query(
+        `
+        UPDATE public.food_batches
+        SET status = 'cancelled'::public.food_batch_status, updated_at = now()
+        WHERE id = $1
+        RETURNING *;
+        `,
+        [id],
+      )).rows[0] as FoodBatchRecord;
 
-    await this.safechain.recordEvent({
-      batchId: id,
-      eventType: 'batch_cancelled',
-      description: `Batch cancelled by ${user.fullName}. Reason: ${reason || 'Not specified'}`,
-      recordedBy: user.id,
-      eventData: { cancellationReason: reason },
-    });
+      await this.safechain.recordEvent(
+        {
+          batchId: id,
+          eventType: 'batch_cancelled',
+          description: `Batch cancelled by ${user.fullName}. Reason: ${reason || 'Not specified'}`,
+          recordedBy: user.id,
+          eventData: { cancellationReason: reason },
+        },
+        client,
+      );
 
-    return updated;
+      return updated;
+    }, user.id);
   }
 
   /**
@@ -360,7 +621,6 @@ export class FoodBatchesService {
    */
   async splitBatch(parentBatchId: string, dto: SplitBatchDto, user: AuthUser): Promise<any> {
     return this.db.transaction(async (client) => {
-      // 1. Lock parent batch row for update
       const parentRes = await client.query(
         `SELECT * FROM public.food_batches WHERE id = $1 FOR UPDATE;`,
         [parentBatchId],
@@ -449,7 +709,10 @@ export class FoodBatchesService {
           child.bestBeforeAt ? new Date(child.bestBeforeAt) : parent.best_before_at,
           child.pickupDeadline ? new Date(child.pickupDeadline) : parent.pickup_deadline,
           child.storageInstructions || parent.storage_instructions,
-          FoodBatchStatus.APPROVED, // Child batch is approved for this specific destination route
+          // FOOD SAFETY: child batches are never pre-approved. Splitting into a
+          // destination route (human/animal/waste) requires a certified human
+          // inspection of the child batch before it can be approved or allocated.
+          FoodBatchStatus.PENDING_INSPECTION,
           user.id,
         ];
 
@@ -476,24 +739,12 @@ export class FoodBatchesService {
         );
       }
 
-      // 6. Update parent batch: reserve split quantity as allocated and update status
-      const newAllocated = Number(parent.allocated_quantity || 0) + totalChildQty;
-      const isFullySplit = (availableBalance - totalChildQty) <= 0.0001;
-      const newParentStatus = isFullySplit
-        ? FoodBatchStatus.ALLOCATED
-        : FoodBatchStatus.PARTIALLY_ALLOCATED;
-
-      await client.query(
-        `
-        UPDATE public.food_batches
-        SET 
-          allocated_quantity = $1,
-          status = $2::public.food_batch_status,
-          updated_at = now()
-        WHERE id = $3;
-        `,
-        [newAllocated, newParentStatus, parent.id],
-      );
+      // 6. Parent ledger is NOT manually updated here (BUG-04 fix).
+      // The child INSERT trigger (refresh_reservation_on_batch_change) already
+      // recalculated the parent's allocated_quantity (allocations + child
+      // reservation) and its status through recalculate_batch_allocation_totals().
+      // The TypeScript-side increment previously desynced from the database's
+      // authoritative recalculation performed by refresh_batch_allocation_status().
 
       // 7. Record parent batch SafeChain event
       await this.safechain.recordEvent(
@@ -520,6 +771,6 @@ export class FoodBatchesService {
         remainingParentAvailableQuantity: availableBalance - totalChildQty,
         children: createdChildren,
       };
-    });
+    }, user.id);
   }
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import {
   Navigation,
@@ -13,150 +13,195 @@ import {
   ShieldCheck,
   Truck,
   Leaf,
+  RefreshCw,
+  AlertTriangle,
+  Building2,
+  Scale,
 } from "lucide-react";
 import VolunteerHeader from "@/components/volunteer/VolunteerHeader";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
 import StatusBadge from "@/components/shared/StatusBadge";
-import { storageService } from "@/services/storageService";
-import { VolunteerTask } from "@/types";
+import { deliveriesApi } from "@/services/api/deliveries";
+import { DeliveryTaskRecord } from "@/types/deliveries";
+import { useAuth } from "@/providers/auth-provider";
+import { ApiError } from "@/services/api/api-errors";
 
 export default function VolunteerDashboardPage() {
-  const [tasks, setTasks] = useState<VolunteerTask[]>([]);
+  const { profile } = useAuth();
+  const [tasks, setTasks] = useState<DeliveryTaskRecord[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await deliveriesApi.listDeliveries({ limit: 10 });
+      setTasks(response.data || []);
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        setError(`Backend Error (${err.statusCode}): ${err.message}`);
+      } else {
+        setError(err.message || "Failed to load volunteer mission data");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    setTasks(storageService.getVolunteerTasks());
-  }, []);
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Derived metrics from verified backend tasks
+  const assignedCount = tasks.filter((t) => t.status === "assigned" || t.status === "accepted").length;
+  const inTransitCount = tasks.filter((t) => t.status === "in_transit" || t.status === "pickup_confirmed").length;
+  const completedCount = tasks.filter((t) => t.status === "delivered" || t.status === "discrepancy_reported").length;
 
   return (
     <div className="flex-1 flex flex-col">
       <VolunteerHeader
         title="Volunteer Mission Control"
-        subtitle="Aarav Sharma • Delhi NCR E-Rickshaw Rapid Fleet"
+        subtitle={`${profile?.fullName || "Courier Volunteer"} • Rapid Rescue Fleet Dispatch`}
       />
 
       <div className="p-6 sm:p-8 space-y-6 flex-1 max-w-7xl">
-        <Breadcrumbs items={[{ label: "Volunteer Hub", href: "/volunteer/dashboard" }, { label: "Mission Dashboard" }]} />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <Breadcrumbs
+            items={[{ label: "Volunteer Hub", href: "/volunteer/dashboard" }, { label: "Mission Dashboard" }]}
+          />
+          <button
+            onClick={fetchDashboardData}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 shadow-sm transition disabled:opacity-50 self-start sm:self-auto"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
 
-        {/* Top Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-2xl p-4 text-xs text-red-800 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={fetchDashboardData}
+              className="px-3 py-1.5 rounded-lg bg-red-100 hover:bg-red-200 text-red-900 text-xs font-semibold transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Real KPI Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500 font-medium">Missions Completed</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">148</div>
-              <span className="text-[10px] text-blue-600 font-semibold mt-1 block">100% on-time rate</span>
+              <span className="text-xs text-slate-500 font-medium">Awaiting Pickup</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : assignedCount}
+              </div>
+              <span className="text-[10px] text-blue-600 font-semibold mt-1 block">Ready at donor dock</span>
             </div>
             <div className="w-11 h-11 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
-              <CheckCircle2 className="w-5 h-5" />
+              <Clock className="w-5 h-5" />
             </div>
           </div>
 
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
             <div>
-              <span className="text-xs text-slate-500 font-medium">Food Delivered</span>
-              <div className="text-2xl font-black text-slate-900 mt-1">4,120 kg</div>
-              <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">~10,800 meals served</span>
-            </div>
-            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
-              <Leaf className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div>
-              <span className="text-xs text-slate-500 font-medium">Karma Points</span>
-              <div className="text-2xl font-black text-amber-600 mt-1">4,850</div>
-              <span className="text-[10px] text-amber-700 font-semibold mt-1 block">City Rank #1 (Legend)</span>
+              <span className="text-xs text-slate-500 font-medium">In Transit</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : inTransitCount}
+              </div>
+              <span className="text-[10px] text-amber-600 font-semibold mt-1 block">En route to shelter</span>
             </div>
             <div className="w-11 h-11 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
-              <Zap className="w-5 h-5" />
-            </div>
-          </div>
-
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div>
-              <span className="text-xs text-slate-500 font-medium">Certified Vehicle</span>
-              <div className="text-lg font-black text-slate-900 mt-1">E-Rickshaw #DL-04</div>
-              <span className="text-[10px] text-slate-400 font-semibold mt-1 block">Insulated thermal bin</span>
-            </div>
-            <div className="w-11 h-11 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold">
               <Truck className="w-5 h-5" />
             </div>
           </div>
+
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-xs text-slate-500 font-medium">Verified Delivered</span>
+              <div className="text-2xl font-extrabold text-slate-900 mt-1">
+                {loading ? "--" : completedCount}
+              </div>
+              <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">Confirmed by recipient</span>
+            </div>
+            <div className="w-11 h-11 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+          </div>
         </div>
 
-        {/* Live Active Mission Box */}
-        <div className="bg-white rounded-3xl border border-blue-200 shadow-sm p-6 sm:p-8 space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
-            <div className="flex items-center gap-3">
-              <span className="w-3 h-3 rounded-full bg-blue-600 animate-ping" />
-              <h3 className="font-bold text-slate-900 text-base">Active Rescue Mission in Progress</h3>
+        {/* Mission Roster Preview */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                Assigned Delivery Tasks
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Active food transportation missions assigned to your courier ID
+              </p>
             </div>
             <Link
-              href="/volunteer/routes"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+              href="/volunteer/tasks"
+              className="text-xs font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1 transition"
             >
-              <Navigation className="w-3.5 h-3.5" />
-              <span>Launch Live GPS Map</span>
+              <span>View All Tasks</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </Link>
           </div>
 
-          {tasks.length > 0 && (
-            <div className="space-y-4 pt-2">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h4 className="font-bold text-slate-900 text-sm">{tasks[0].title}</h4>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {tasks[0].totalKg} kg ({tasks[0].servings} meals) • ETA: {tasks[0].etaMinutes} mins
-                  </p>
-                </div>
-                <StatusBadge status={tasks[0].status} size="sm" />
-              </div>
-
-              {/* Waypoints Strip */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-xs">
-                {tasks[0].routeStops.map((stop) => (
-                  <div
-                    key={stop.order}
-                    className={`p-3 rounded-xl border ${
-                      stop.completed ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-[10px] uppercase text-slate-500">Stop {stop.order}</span>
-                      {stop.completed && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+          {loading ? (
+            <div className="p-6 space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-16 bg-slate-100 rounded-xl animate-pulse" />
+              ))}
+            </div>
+          ) : tasks.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-500 space-y-1">
+              <Truck className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+              <p className="font-semibold text-slate-700">No active delivery assignments.</p>
+              <p className="text-slate-400">When donor allocations are routed to you, tasks will appear here.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {tasks.map((task) => (
+                <div
+                  key={task.id}
+                  className="p-4 hover:bg-slate-50/80 transition flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-blue-800 bg-blue-50 px-2 py-0.5 rounded text-[11px]">
+                        {task.batch_code || "CONSIGNMENT"}
+                      </span>
+                      <StatusBadge status={task.status} size="sm" />
                     </div>
-                    <p className="font-semibold text-slate-800">{stop.title}</p>
-                    <p className="text-[11px] text-slate-500 truncate mt-0.5">{stop.address}</p>
+                    <h3 className="font-bold text-slate-900 text-sm">{task.food_name}</h3>
+                    <div className="flex items-center gap-3 text-slate-500 text-[11px]">
+                      <span>From: <strong>{task.donor_name}</strong></span>
+                      <span>To: <strong>{task.recipient_name}</strong></span>
+                      <span>Quantity: <strong>{task.allocated_quantity} {task.quantity_unit}</strong></span>
+                    </div>
                   </div>
-                ))}
-              </div>
+
+                  <Link
+                    href={`/volunteer/tasks/${task.id}`}
+                    className="inline-flex items-center gap-1 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition self-start md:self-auto"
+                  >
+                    <span>Execute Mission</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              ))}
             </div>
           )}
-        </div>
-
-        {/* Quick Links */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Link
-            href="/volunteer/leaderboard"
-            className="p-6 bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-slate-300 transition flex items-center justify-between"
-          >
-            <div>
-              <h4 className="font-bold text-slate-900 text-sm">City Volunteer Leaderboard</h4>
-              <p className="text-xs text-slate-500 mt-0.5">See weekly point rankings across Delhi NCR</p>
-            </div>
-            <ArrowRight className="w-5 h-5 text-slate-400" />
-          </Link>
-
-          <Link
-            href="/volunteer/badges"
-            className="p-6 bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-slate-300 transition flex items-center justify-between"
-          >
-            <div>
-              <h4 className="font-bold text-slate-900 text-sm">Badges & Certificates</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Review 4 earned honors including Cold Chain Master</p>
-            </div>
-            <ArrowRight className="w-5 h-5 text-slate-400" />
-          </Link>
         </div>
       </div>
     </div>
