@@ -82,9 +82,10 @@ export default function FoodTracePage() {
           </div>
           <button
             type="submit"
-            className="px-6 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm rounded-xl transition shadow-md shadow-brand-600/20"
+            className="btn-interactive btn-primary px-6 py-3 text-sm font-bold gap-2"
           >
-            Track Consignment
+            <Search className="w-4 h-4" />
+            <span>Track Consignment</span>
           </button>
         </form>
 
@@ -98,7 +99,7 @@ export default function FoodTracePage() {
                 setSearchQuery(code);
                 performSearch(code);
               }}
-              className="px-2.5 py-1 bg-slate-100 hover:bg-brand-100 hover:text-brand-800 rounded-lg font-mono text-[11px] font-semibold transition"
+              className="btn-interactive btn-outline px-2.5 py-1 font-mono text-[11px] font-semibold"
             >
               {code}
             </button>

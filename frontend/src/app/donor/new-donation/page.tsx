@@ -10,6 +10,7 @@ import {
   Clock,
   AlertCircle,
   Building,
+  Loader2,
 } from "lucide-react";
 import DonorHeader from "@/components/donor/DonorHeader";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
@@ -330,14 +331,18 @@ export default function NewDonationPage() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full py-4 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-60"
+                  aria-busy={loading ? "true" : undefined}
+                  className="btn-interactive btn-primary w-full py-3.5 text-xs font-bold gap-2"
                 >
                   {loading ? (
-                    <span>Submitting Consignment to FoodLoop API...</span>
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      <span>Submitting Consignment to AnnaSathi API...</span>
+                    </>
                   ) : (
                     <>
-                      <PlusCircle className="w-4 h-4" />
-                      <span>Post Consignment to FoodLoop</span>
+                      <PlusCircle className="w-4 h-4 shrink-0" />
+                      <span>Post Consignment to AnnaSathi</span>
                     </>
                   )}
                 </button>

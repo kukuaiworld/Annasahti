@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { RefreshCw, Leaf } from "lucide-react";
+import { Leaf } from "lucide-react";
 
 interface LogoProps {
   variant?: "full" | "icon" | "white";
@@ -28,9 +28,9 @@ export default function Logo({
 
   const content = (
     <div className={`flex items-center gap-2.5 ${className}`}>
-      {/* FoodLoop Loop Emblem */}
+      {/* AnnaSathi Emblem */}
       <div
-        className={`${iconSizes[size]} rounded-2xl bg-gradient-to-br from-brand-600 to-emerald-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-brand-600/20 transition-transform hover:scale-105 duration-200`}
+        className={`${iconSizes[size]} rounded-2xl bg-gradient-to-br from-brand-600 to-emerald-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-brand-600/20 transition-all duration-200 hover:scale-105`}
       >
         <Leaf className="w-5 h-5 text-emerald-100" />
       </div>
@@ -43,7 +43,7 @@ export default function Logo({
                 variant === "white" ? "text-white" : "text-slate-900"
               }`}
             >
-              Food<span className="text-brand-600">Loop</span>
+              Anna<span className="text-brand-600">Sathi</span>
             </span>
             <span
               className={`text-[9px] uppercase font-extrabold px-1.5 py-0.5 rounded tracking-wider ${
@@ -69,7 +69,11 @@ export default function Logo({
 
   if (href) {
     return (
-      <Link href={href} className="inline-block focus:outline-none">
+      <Link
+        href={href}
+        className="inline-block focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 rounded-xl"
+        aria-label="AnnaSathi Home"
+      >
         {content}
       </Link>
     );

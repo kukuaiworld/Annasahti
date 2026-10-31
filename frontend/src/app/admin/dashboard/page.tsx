@@ -108,12 +108,12 @@ export default function AdminDashboardPage() {
           </Link>
 
           <Link
-            href="/admin/matching"
+            href="/admin/inventory"
             className="p-5 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 transition shadow-sm flex items-center justify-between"
           >
             <div>
-              <h4 className="font-bold text-slate-900 text-sm">Smart Matching Engine</h4>
-              <p className="text-xs text-slate-500 mt-0.5">Configure radius weighting and manual dispatches</p>
+              <h4 className="font-bold text-slate-900 text-sm">Consignment Inventory</h4>
+              <p className="text-xs text-slate-500 mt-0.5">Track all food batches, verification tiers and holdings</p>
             </div>
             <ArrowRight className="w-5 h-5 text-slate-400" />
           </Link>

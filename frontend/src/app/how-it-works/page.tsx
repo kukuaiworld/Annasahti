@@ -25,8 +25,8 @@ export default function HowItWorksPage() {
     {
       num: "02",
       icon: Cpu,
-      title: "Algorithmic Smart Radius Matching",
-      desc: "The AnnaSathi engine analyzes GIS coordinates, recipient dietary compatibility, requested meal volumes, and shelter urgency rankings to calculate optimal matches without human delay.",
+      title: "Recipient Requirement & Radius Allocation",
+      desc: "The AnnaSathi engine analyzes GIS coordinates, recipient dietary compatibility, requested meal volumes, and shelter urgency rankings to calculate optimal allocation without human delay.",
       color: "border-purple-200 bg-purple-50 text-purple-700",
     },
     {
@@ -192,16 +192,16 @@ export default function HowItWorksPage() {
         <h3 className="text-xl font-bold text-slate-900">Want to test the platform in action?</h3>
         <div className="flex flex-wrap justify-center gap-4">
           <Link
-            href="/smart-matching"
-            className="px-6 py-3 bg-brand-600 text-white font-bold text-xs rounded-xl hover:bg-brand-700 transition"
-          >
-            Launch Smart Matching Engine
-          </Link>
-          <Link
             href="/food-trace"
-            className="px-6 py-3 bg-white text-slate-800 font-bold text-xs rounded-xl border border-slate-300 hover:bg-slate-50 transition"
+            className="btn-interactive btn-primary px-6 py-3 text-xs font-bold"
           >
             Trace a Real Donation Batch
+          </Link>
+          <Link
+            href="/donor/new-donation"
+            className="btn-interactive btn-outline px-6 py-3 text-xs font-bold"
+          >
+            Post Surplus Food
           </Link>
         </div>
       </div>

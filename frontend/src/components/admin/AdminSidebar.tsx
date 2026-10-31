@@ -23,7 +23,6 @@ export default function AdminSidebar() {
     { label: "Admin Directorate", href: "/admin/dashboard", icon: LayoutDashboard },
     { label: "Stakeholder Directory", href: "/admin/users", icon: Users },
     { label: "FSSAI & NGO Verification", href: "/admin/verifications", icon: ShieldCheck },
-    { label: "Smart Matching Engine", href: "/admin/matching", icon: Cpu },
     { label: "Consignment Inventory", href: "/admin/inventory", icon: Package },
     { label: "National Impact Reports", href: "/admin/reports", icon: BarChart3 },
     { label: "System Audit Logs", href: "/admin/logs", icon: FileText },
