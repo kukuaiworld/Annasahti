@@ -3,17 +3,38 @@ import {
   Logger,
   ForbiddenException,
   ServiceUnavailableException,
+  UnauthorizedException,
+  Optional,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AppRole } from '../common/enums/app.enums';
 import { AuthUser } from '../common/interfaces/auth-user.interface';
-import { VerifiedJwtPayload } from './jwt-verification.service';
+import { JwtVerificationService, VerifiedJwtPayload } from './jwt-verification.service';
+import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    @Optional() private readonly jwtVerificationService?: JwtVerificationService,
+  ) {}
+
+  /**
+   * Verifies a raw JWT string and returns basic authenticated user credentials.
+   */
+  async verifyToken(token: string): Promise<AuthenticatedUser> {
+    if (this.jwtVerificationService) {
+      const payload = await this.jwtVerificationService.verifyToken(token);
+      return {
+        id: payload.sub,
+        email: payload.email,
+        role: payload.role || 'authenticated',
+      };
+    }
+    throw new UnauthorizedException('JWT verification service not available.');
+  }
 
   /**
    * Resolves trusted application context for a cryptographically verified JWT payload.

@@ -123,21 +123,21 @@ export default function AboutPage() {
         <div>
           <h3 className="text-xl font-bold text-brand-950">Curious how our matching technology functions?</h3>
           <p className="text-sm text-brand-800 mt-1">
-            See the algorithmic scoring and radius routing in real-time.
+            See how verified surplus reaches shelters in under 90 minutes.
           </p>
         </div>
         <div className="flex gap-3">
           <Link
             href="/how-it-works"
-            className="px-5 py-2.5 bg-brand-600 text-white text-xs font-bold rounded-xl hover:bg-brand-700 transition"
+            className="btn-interactive btn-primary px-5 py-2.5 text-xs font-bold"
           >
             How It Works
           </Link>
           <Link
-            href="/smart-matching"
-            className="px-5 py-2.5 bg-white text-slate-800 text-xs font-bold rounded-xl border border-slate-200 hover:bg-slate-50 transition"
+            href="/food-trace"
+            className="btn-interactive btn-outline px-5 py-2.5 text-xs font-bold"
           >
-            Smart Matching
+            Trace Consignment
           </Link>
         </div>
       </div>

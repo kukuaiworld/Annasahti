@@ -712,8 +712,8 @@ export const PUBLIC_FAQS = [
     a: "Under the Food Safety and Standards (Recovery & Distribution of Surplus Food) Regulations and the Indian Good Samaritan legal framework, bona fide donors donating in good faith to verified non-profits are legally protected from liability.",
   },
   {
-    q: "How does the Smart Matching algorithm select recipients?",
-    a: "Our algorithm evaluates geographical proximity (GIS radius), food category compatibility (e.g. strict vegetarian preferences of orphanages), required quantity match to avoid secondary wastage, vehicle payload capacity, and shelter urgency scores.",
+    q: "How are recipient organizations paired with surplus food?",
+    a: "Our allocation system evaluates geographical proximity (GIS radius), food category compatibility (e.g. strict vegetarian preferences of orphanages), required quantity match to avoid secondary wastage, vehicle payload capacity, and shelter urgency scores.",
   },
   {
     q: "Can individuals volunteer without special vehicles?",

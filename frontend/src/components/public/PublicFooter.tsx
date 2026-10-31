@@ -36,19 +36,19 @@ export default function PublicFooter() {
                 <Link href="/about" className="hover:text-brand-400 transition">About the Initiative</Link>
               </li>
               <li>
-                <Link href="/problem-statement" className="hover:text-brand-400 transition">The Food Waste Crisis</Link>
-              </li>
-              <li>
                 <Link href="/how-it-works" className="hover:text-brand-400 transition">How It Works</Link>
-              </li>
-              <li>
-                <Link href="/smart-matching" className="hover:text-brand-400 transition">Smart Matching Engine</Link>
               </li>
               <li>
                 <Link href="/food-trace" className="hover:text-brand-400 transition">FoodTrace QR Verification</Link>
               </li>
               <li>
                 <Link href="/impact" className="hover:text-brand-400 transition">Impact & ESG Analytics</Link>
+              </li>
+              <li>
+                <Link href="/volunteer-program" className="hover:text-brand-400 transition">Volunteer Fleet</Link>
+              </li>
+              <li>
+                <Link href="/sustainability" className="hover:text-brand-400 transition">Sustainability & Carbon</Link>
               </li>
             </ul>
           </div>

@@ -56,7 +56,7 @@ export default function NewRecipientRequestPage() {
             <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
             <h3 className="text-xl font-bold text-slate-900">Food Requirement Broadcasted!</h3>
             <p className="text-xs text-slate-600">
-              The smart matching engine is scanning donor kitchens within a 10km radius.
+              The allocation network is scanning verified donor kitchens within your radius.
             </p>
           </div>
         ) : (

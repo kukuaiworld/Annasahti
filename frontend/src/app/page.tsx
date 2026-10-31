@@ -51,7 +51,7 @@ export default function HomePage() {
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 max-w-md mx-auto">
             <Link
               href="/donor/new-donation"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 rounded-xl shadow-lg shadow-brand-600/25 transition-all hover:-translate-y-0.5"
+              className="btn-interactive btn-primary w-full sm:w-auto px-6 py-3.5 text-sm font-bold gap-2"
             >
               <span>Donate Surplus Now</span>
               <ArrowRight className="w-4 h-4" />
@@ -59,7 +59,7 @@ export default function HomePage() {
 
             <Link
               href="/food-trace"
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 text-sm font-bold text-slate-800 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-sm transition hover:border-slate-300"
+              className="btn-interactive btn-outline w-full sm:w-auto px-6 py-3.5 text-sm font-bold gap-2"
             >
               <QrCode className="w-4 h-4 text-brand-600" />
               <span>Trace Food Batch</span>
@@ -68,21 +68,21 @@ export default function HomePage() {
 
           {/* Quick Highlight Stats Strip */}
           <div className="mt-14 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto text-left">
-            <div className="bg-white/80 backdrop-blur p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="card-interactive bg-white/90 backdrop-blur p-4">
               <div className="text-2xl sm:text-3xl font-extrabold text-brand-700">14,250+ kg</div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">Surplus Food Rescued</p>
+              <p className="text-xs text-slate-500 font-medium mt-1">Surplus Food Rescued</p>
             </div>
-            <div className="bg-white/80 backdrop-blur p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="card-interactive bg-white/90 backdrop-blur p-4">
               <div className="text-2xl sm:text-3xl font-extrabold text-brand-700">38,900+</div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">Warm Meals Served</p>
+              <p className="text-xs text-slate-500 font-medium mt-1">Warm Meals Served</p>
             </div>
-            <div className="bg-white/80 backdrop-blur p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="card-interactive bg-white/90 backdrop-blur p-4">
               <div className="text-2xl sm:text-3xl font-extrabold text-brand-700">34.2 Tons</div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">CO₂ Emissions Diverted</p>
+              <p className="text-xs text-slate-500 font-medium mt-1">CO₂ Emissions Diverted</p>
             </div>
-            <div className="bg-white/80 backdrop-blur p-4 rounded-xl border border-slate-200/80 shadow-sm">
+            <div className="card-interactive bg-white/90 backdrop-blur p-4">
               <div className="text-2xl sm:text-3xl font-extrabold text-brand-700">100%</div>
-              <p className="text-xs text-slate-500 font-medium mt-0.5">Diversion from Landfills</p>
+              <p className="text-xs text-slate-500 font-medium mt-1">Diversion from Landfills</p>
             </div>
           </div>
         </div>
@@ -105,7 +105,7 @@ export default function HomePage() {
                 unfunded orphanages, night shelters, and community kitchens struggle daily to feed their residents.
               </p>
               <p className="text-slate-600 text-sm sm:text-base leading-relaxed">
-                AnnaSathi provides an end-to-end technological bridge. Using GIS radius-based smart matching, certified
+                AnnaSathi provides an end-to-end technological bridge. Using GIS radius-based allocation, certified
                 volunteer courier dispatch, and multi-tier food diversion, we ensure that zero food is wasted.
               </p>
 
@@ -133,18 +133,12 @@ export default function HomePage() {
               <p className="text-xs text-slate-600">
                 Discover our founding vision, technical methodology, and the crisis we are solving.
               </p>
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="pt-2">
                 <Link
                   href="/about"
-                  className="w-full py-2.5 px-4 bg-brand-600 text-white text-xs font-bold rounded-lg hover:bg-brand-700 transition"
+                  className="btn-interactive btn-primary w-full py-2.5 px-4 text-xs font-bold"
                 >
                   Read About Us
-                </Link>
-                <Link
-                  href="/problem-statement"
-                  className="w-full py-2 px-4 bg-white text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 hover:bg-slate-50 transition"
-                >
-                  View Problem Statement
                 </Link>
               </div>
             </div>
@@ -167,24 +161,24 @@ export default function HomePage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Feature 1: Smart Matching */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col justify-between hover-card">
+          {/* Feature 1: Rapid Volunteer Transport */}
+          <div className="card-interactive bg-white p-6 flex flex-col justify-between">
             <div className="space-y-3">
               <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
-                <Sparkles className="w-5 h-5" />
+                <Truck className="w-5 h-5" />
               </div>
-              <h3 className="text-lg font-bold text-slate-900">AI Smart Matching Engine</h3>
+              <h3 className="text-lg font-bold text-slate-900">Rapid Volunteer Transport</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Instantly pairs donor surplus with nearest recipient shelters based on distance, dietary restrictions,
-                and meal quantity to eliminate secondary food waste.
+                Connects trained volunteer couriers with thermal insulated storage to collect food and deliver it
+                to vetted recipient shelters in under 45 minutes.
               </p>
             </div>
             <div className="pt-6 mt-6 border-t border-slate-100">
               <Link
-                href="/smart-matching"
+                href="/volunteer-program"
                 className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-700 hover:text-purple-900"
               >
-                <span>Explore Smart Matching</span>
+                <span>Volunteer Program</span>
                 <ChevronRight className="w-4 h-4" />
               </Link>
             </div>
@@ -542,13 +536,13 @@ export default function HomePage() {
           <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link
               href="/register"
-              className="w-full sm:w-auto px-6 py-3 bg-white text-brand-800 text-sm font-bold rounded-xl hover:bg-brand-50 transition shadow"
+              className="btn-interactive btn-outline w-full sm:w-auto px-6 py-3 text-brand-900 bg-white hover:bg-brand-50 text-sm font-bold border-0 shadow-md"
             >
               Register Your Organization
             </Link>
             <Link
               href="/volunteer-program"
-              className="w-full sm:w-auto px-6 py-3 bg-brand-800/80 hover:bg-brand-800 text-white text-sm font-semibold rounded-xl border border-brand-600 transition"
+              className="btn-interactive w-full sm:w-auto px-6 py-3 bg-brand-800/90 hover:bg-brand-800 text-white text-sm font-semibold rounded-xl border border-brand-500/50 shadow-sm"
             >
               Sign Up as Volunteer Courier
             </Link>

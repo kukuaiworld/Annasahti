@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { UserPlus, CheckCircle2, AlertCircle, Leaf, ShieldAlert } from "lucide-react";
+import { UserPlus, CheckCircle2, AlertCircle, Leaf, ShieldAlert, Loader2 } from "lucide-react";
 import Breadcrumbs from "@/components/shared/Breadcrumbs";
 import { useAuth } from "@/providers/auth-provider";
 
@@ -156,13 +156,17 @@ export default function RegisterPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full py-3.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-60"
+                aria-busy={loading ? "true" : undefined}
+                className="btn-interactive btn-primary w-full py-3.5 text-xs font-bold gap-2"
               >
                 {loading ? (
-                  <span>Registering Account with Supabase...</span>
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                    <span>Registering Account with Supabase...</span>
+                  </>
                 ) : (
                   <>
-                    <UserPlus className="w-4 h-4" />
+                    <UserPlus className="w-4 h-4 shrink-0" />
                     <span>Create Account</span>
                   </>
                 )}
