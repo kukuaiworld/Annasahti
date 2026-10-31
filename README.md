@@ -1,4 +1,4 @@
-# FoodLoop — Surplus Food Rescue & Distribution Platform
+# AnnaSaathi — Surplus Food Rescue & Distribution Platform
 
 FoodLoop connects food donors (restaurants, hotels, caterers), humanitarian NGOs, volunteers, and waste-processing facilities to eliminate food waste and fight hunger.
 
